@@ -10,6 +10,8 @@ import { createInstalledUpdateBuilderConfig } from '../scripts/installed-update-
 import { runtimeFixture } from './runtime-fixture.ts'
 import { writeDesktopRuntime } from '../src/runtime-tree.ts'
 
+const PRODUCTION_ORIGIN = 'https://production-updates.example.com'
+
 vi.mock('../scripts/windows-sign.mjs', () => ({
   createWindowsTokenSigner: () => () => { throw new Error('test must not invoke hardware signing') },
   installWindowsNsisBootstrapSigner: () => undefined,
@@ -111,7 +113,7 @@ describe('installed-update application inputs and builder configuration', () => 
   })
 
   it.each([
-    { DSH_DESKTOP_AUTO_UPDATE_ENV: 'production' },
+    { DSH_DESKTOP_AUTO_UPDATE_ENV: 'production', DOWNLOAD_PROD_ORIGIN: PRODUCTION_ORIGIN },
     { DSH_DESKTOP_UNSIGNED: '1' },
     { DOWNLOAD_TEST_ORIGIN: 'https://download.deepseek.com' },
   ])('rejects incompatible qualification settings %j', async (override) => {

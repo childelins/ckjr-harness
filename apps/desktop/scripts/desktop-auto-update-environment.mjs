@@ -14,8 +14,11 @@ const UPDATE_ENVIRONMENTS = {
     secretKeyEnvName: 'DOWNLOAD_TEST_COS_SECRET_KEY',
   },
   production: {
-    originEnvName: undefined,
-    fixedOrigin: 'https://download.deepseek.com',
+    // 本 fork 不得指向 DeepSeek 官方更新源：品牌化版本会自动升级成官方包，
+    // 使用户机器上的品牌、账号体系与计费链路被静默覆盖。
+    // 与 test 同形改为环境变量提供，缺失即失败（fail-closed），而不是悄悄用官方源。
+    originEnvName: 'DOWNLOAD_PROD_ORIGIN',
+    fixedOrigin: undefined,
     bucketEnvName: 'DOWNLOAD_PROD_COS_BUCKET',
     secretIdEnvName: 'DOWNLOAD_PROD_COS_SECRET_ID',
     secretKeyEnvName: 'DOWNLOAD_PROD_COS_SECRET_KEY',
