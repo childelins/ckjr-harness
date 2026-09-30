@@ -1,7 +1,7 @@
-DeepSeek Harness
-DeepSeek Harness
+CKJR
+CKJR
 Add an API key to get started
-Configure official DeepSeek models to start using Harness
+Configure CKJR models to get started
 Enter API key [password]
 Save and continue [disabled]
 Set up later

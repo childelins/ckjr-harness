@@ -5,6 +5,8 @@ import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { resolveWindowsUpdatePublisher } from '../scripts/windows-sign.mjs'
 
+const PRODUCTION_ORIGIN = 'https://production-updates.example.com'
+
 vi.mock('../scripts/windows-sign.mjs', async importOriginal => ({
   ...await importOriginal<typeof import('../scripts/windows-sign.mjs')>(),
   installWindowsNsisBootstrapSigner: vi.fn(),
@@ -88,9 +90,10 @@ describe('Windows update publisher', () => {
         DSH_DESKTOP_WINDOWS_KEY_CONTAINER: 'test-container',
         DSH_DESKTOP_WINDOWS_TOKEN_PIN: 'test-pin',
         DSH_DESKTOP_AUTO_UPDATE_ENV: 'production',
+        DOWNLOAD_PROD_ORIGIN: PRODUCTION_ORIGIN,
       }, 'win32', 'x64')
       expect(config.win.forceCodeSigning).toBe(true)
-      expect(config.artifactName).toBe('deepseek-harness-${version}-${os}-${arch}.${ext}')
+      expect(config.artifactName).toBe('CKJR-Harness-${version}-${os}-${arch}.${ext}')
       expect(typeof config.win.signtoolOptions.sign).toBe('function')
       const manager = new WindowsSignToolManager({ platformSpecificBuildOptions: config.win, getCscLink: () => undefined })
       expect(await manager.computedPublisherName.value).toEqual(['CN=Publisher,O=Company,C=CN'])

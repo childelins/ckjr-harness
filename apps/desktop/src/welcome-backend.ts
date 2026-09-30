@@ -3,6 +3,7 @@ import type { ProductEvent } from '@deepseek-ai/dsh-client-product-analytics/typ
 
 import { randomUUID } from 'node:crypto'
 import { desktopAccountBackend, type DesktopAccountBackend } from './account-backend.ts'
+import { BRAND } from './brand.ts'
 
 /** Metadata needed before the native entry or workspace becomes visible. */
 export interface WelcomeState {
@@ -75,7 +76,7 @@ export async function connectDesktopWelcome(
     const official: unknown = settings.namespaces.find((item: unknown) => record(item) && item.ns === 'llm-deepseek')
     if (official === undefined) return { settings: { namespaces: settings.namespaces }, ref: undefined }
     if (!record(official) || !record(official.value) || typeof official.value.apiKeyEnv !== 'string') {
-      throw new Error('desktop welcome: missing official DeepSeek credential reference')
+      throw new Error(`desktop welcome: missing official ${BRAND.en} credential reference`)
     }
     return { settings: { namespaces: settings.namespaces }, ref: official.value.apiKeyEnv }
   }
