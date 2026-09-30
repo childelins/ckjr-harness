@@ -241,7 +241,7 @@ export const zh = {
   disableThirdPartyPlugins: '禁用第三方插件、备份 profile patch 并重启',
   welcomeTitle: BRAND.zh,
   welcomeBrand: BRAND.zh,
-  welcomeTaglineBefore: '欢迎使用 ',
+  welcomeTaglineBefore: '欢迎使用',
   welcomeTaglineBrand: BRAND.zh,
   welcomeTaglineAfter: '',
   welcomeDescription: '组装无限可能，共探智能上限',
