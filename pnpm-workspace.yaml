@@ -1,6 +1,10 @@
 packages:
   - vendor/*
   - packages/*/*
+  # 创客匠人 (CKJR) 出厂插件：另一个仓库 childelins/dsh-plugins 检出在 ckjr-plugins/，
+  # 由 packages/bundle/ckjr 以 workspace:* 依赖，再由桌面端打包逐个 pnpm pack 进本地包集合。
+  # 构建（无论本地还是 CI）都必须先有这份检出，否则 pnpm install 会因找不到工作区包而失败。
+  - ckjr-plugins/*
   # The Landlock launcher is developed with its harness consumers but keeps
   # its native build and publication scripts under native/system.
   - native/system

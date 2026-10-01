@@ -24,6 +24,7 @@ describe('desktop build paths', () => {
       'packedDsh',
       'packedVendor',
       'packedLandlock',
+      'packedCkjr',
     ] as const
 
     for (const key of mutableKeys) {

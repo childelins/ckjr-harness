@@ -28,7 +28,13 @@ import { tarballFiles } from '../../../scripts/release/tarball.ts'
 import { resolveDesktopTargetBuildPaths } from './desktop-build-paths.mjs'
 
 const DSH_PACKAGE = '@deepseek-ai/dsh'
-const ROOT_PACKAGES = [DSH_PACKAGE, DESKTOP_HOST_PACKAGE] as const
+/**
+ * 出厂预装的创客匠人 (CKJR) 插件 bundle。
+ * 它是闭包根之一：它的 dependencies 指向 ckjr-plugins/ 里检出的三个 @ckjr 插件包，
+ * 因此从这一个根出发就能把 bundle 与三个插件一起选进出厂包集合。
+ */
+const CKJR_BUNDLE_PACKAGE = '@ckjr/dsh-bundle-ckjr'
+const ROOT_PACKAGES = [DSH_PACKAGE, DESKTOP_HOST_PACKAGE, CKJR_BUNDLE_PACKAGE] as const
 const APP_ROOT = resolve(import.meta.dirname, '..')
 const REPOSITORY_ROOT = resolve(APP_ROOT, '..', '..')
 
@@ -51,7 +57,7 @@ function dependencyNames(manifest: Readonly<Record<string, unknown>>, section: s
 }
 
 /**
- * Select workspace dependencies rooted at dsh and its private Host; npm resolves external packages.
+ * Select workspace dependencies rooted at dsh, its private Host, and the bundled CKJR plugins; npm resolves external packages.
  * Reads the repository workspace manifest and package manifests to distinguish required local packages from npm-resolved externals.
  * @param available - Packed packages indexed by package name.
  * @returns Selected packages sorted by name.
@@ -164,6 +170,7 @@ function main(): void {
     buildPaths.packedDsh,
     buildPaths.packedVendor,
     buildPaths.packedLandlock,
+    buildPaths.packedCkjr,
   ]
   const { values } = parseArgs({
     options: { from: { type: 'string', multiple: true }, out: { type: 'string' } },

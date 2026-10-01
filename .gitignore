@@ -46,3 +46,6 @@ worktrees/
 .agents/worktrees/
 .typert-*/
 native/system/test/bin/
+# 创客匠人 (CKJR) 插件是另一个仓库（childelins/dsh-plugins）的检出，构建时放在这里。
+# 忽略它是为了防止误提交——插件源码只有那一份，不允许 vendor 进本 fork。
+ckjr-plugins/

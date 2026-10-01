@@ -181,7 +181,9 @@ export const PROFILE_TEMPLATES: Record<string, ProfileTemplate> = {
     bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-acp-app'],
   },
   web: {
-    bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app'],
+    // 创客匠人 (CKJR) 出厂插件排在最后：它 disable 的两行由前面的层 insert，
+    // patch 按 id 定位，被定位的行必须已经存在。
+    bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', '@ckjr/dsh-bundle-ckjr'],
   },
   headless: {
     bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-headless'],

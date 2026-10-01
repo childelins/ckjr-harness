@@ -1,7 +1,7 @@
 /** Build one release target with matching Electron and dsh architecture. */
 
 import { spawn } from 'node:child_process'
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { parseArgs } from 'node:util'
 import { join, resolve } from 'node:path'
 import {
@@ -45,6 +45,20 @@ const DESKTOP_UPLOAD_CREDENTIAL_ENV_NAMES = new Set([
 
 /** `--build-version` value that numbers a build after the ones already taken. */
 const AUTOMATIC_BUILD_VERSION = 'auto'
+
+/**
+ * 出厂预装的创客匠人 (CKJR) 插件包，按目录 pnpm pack 进 packedCkjr。
+ * bundle 本身在 fork 里（packages/bundle/ckjr），三个插件在 childelins/dsh-plugins
+ * 检出到 ckjr-plugins/。它们都不是 dsh 发布家族的成员（bundle 标了 private，
+ * 插件包连 @deepseek-ai 前缀都没有），所以不能靠 release:pack --family dsh 拿到，
+ * 必须在这里显式打包，再由 prepare:packages 纳入出厂包集合。
+ */
+const CKJR_PACKAGE_DIRECTORIES = [
+  'packages/bundle/ckjr',
+  'ckjr-plugins/dsh-account',
+  'ckjr-plugins/dsh-llm',
+  'ckjr-plugins/dsh-client-ui-ckjr',
+] as const
 
 /** Fixed platform and architecture identifiers exposed by package scripts. */
 export type DesktopPackageTargetName = 'mac-arm64' | 'mac-x64' | 'win-x64'
@@ -456,6 +470,22 @@ export async function packageTarget(
     '--pack-destination',
     buildPaths.packedDsh,
   ], buildEnv, REPOSITORY_ROOT)
+  // CKJR 出厂插件必须在这里就位：缺检出时立刻失败，而不是产出一个没有插件、
+  // 商家登录不了却看着正常的安装包。
+  const missingCkjrPackages = CKJR_PACKAGE_DIRECTORIES.filter(
+    directory => !existsSync(join(REPOSITORY_ROOT, directory, 'package.json')),
+  )
+  if (missingCkjrPackages.length > 0) {
+    throw new Error(
+      `desktop package: missing CKJR plugin package(s): ${missingCkjrPackages.join(', ')}; `
+      + 'check out git@github.com:childelins/dsh-plugins.git at ckjr-plugins/ before packaging',
+    )
+  }
+  rmSync(buildPaths.packedCkjr, { recursive: true, force: true })
+  mkdirSync(buildPaths.packedCkjr, { recursive: true })
+  for (const directory of CKJR_PACKAGE_DIRECTORIES) {
+    await execute(['--dir', directory, 'pack', '--pack-destination', buildPaths.packedCkjr], buildEnv, REPOSITORY_ROOT)
+  }
   await execute(['run', 'release:pack', '--family', 'vendor', '--out', buildPaths.packedVendor, ...packArguments], buildEnv, REPOSITORY_ROOT)
   rmSync(buildPaths.packedLandlock, { recursive: true, force: true })
   mkdirSync(buildPaths.packedLandlock, { recursive: true })
