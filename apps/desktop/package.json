@@ -27,6 +27,7 @@
     "check:package": "tsx scripts/package-target.ts --check",
     "restore:mac-proxy": "tsx scripts/macos-notarization-proxy.ts",
     "package:dir": "tsx scripts/package-target.ts --dir",
+    "package:app-only": "tsx scripts/package-app-only.ts",
     "package:mac:arm64": "tsx scripts/package-target.ts mac-arm64",
     "package:mac:arm64:dir": "tsx scripts/package-target.ts mac-arm64 --dir",
     "package:mac:x64": "tsx scripts/package-target.ts mac-x64",
