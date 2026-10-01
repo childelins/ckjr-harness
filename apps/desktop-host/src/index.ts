@@ -15,11 +15,30 @@ import { installDesktopQuitInspection } from './quit-inspection.ts'
 import { installPlatformSessionPublisher } from './platform-session.ts'
 import { installOfficeEngineResolution } from './office-engine.ts'
 
+/**
+ * 应用内 Web 服务端口，与官方 DeepSeek Harness 的 19387 错开。
+ *
+ * 为什么必须错开：两个应用同时运行时，若端口相同，后启动的那个必需插件 `webserver`
+ * 会以 `EADDRINUSE` 启动失败，进而整个 Host 起不来——桌面端把它呈现为
+ * 「Another DSH instance is running」的致命错误页，看起来像单实例冲突，实际是端口冲突。
+ * 留 `$DSH_DESKTOP_WEB_PORT` 是为了端口被别的程序占用时不必改代码。
+ */
+const DEFAULT_WEB_PORT = process.env.DSH_DESKTOP_WEB_PORT?.trim() || '19487'
+
 async function main(): Promise<void> {
   const runtimeDir = process.argv[2] as string
   const projectDir = process.argv[3] as string
   installOfficeEngineResolution(runtimeDir)
-  const installAnchor = join(runtimeDir, 'node_modules', '@deepseek-ai', 'dsh', 'package.json')
+  // installAnchor 决定 installation scope 的根：profile 里以包名引用的插件行，只有落在
+  // 这个根出发的 dependencies 闭包里，解析拦截层才会把包名路由到它的真实目录。
+  //
+  // 为什么指向外层包装包而不是内层 @deepseek-ai/dsh：本 fork 的出厂插件 @ckjr/* 是
+  // desktop-runtime 这个包装包的依赖，而 @deepseek-ai/dsh 的依赖里没有任何 @ckjr/*。
+  // 指向内层时拦截层查不到这些名字，插件行会回落到「从 <home>/profiles/ 起算」的原生解析，
+  // 而插件装在 <runtimeDir>/node_modules 下——于是 import 失败、fiber 建不出来，最终只留下
+  // 一句 `failed to import`（真实异常被 loader 的 catch 吞掉）。外层包的闭包是内层的超集，
+  // 所以指外层只会多不会少。
+  const installAnchor = join(runtimeDir, 'package.json')
   const profile = loadProfileDirectory('dsh', projectDir, installAnchor)
   reportSkippedBundles('dsh', profile)
   const application = runProfile({
@@ -27,7 +46,7 @@ async function main(): Promise<void> {
     profile: 'desktop',
     resolvedProfile: { profile, installAnchor },
     patchFiles: [],
-    args: ['--no-open', '--port', '19387'],
+    args: ['--no-open', '--port', DEFAULT_WEB_PORT],
     ...(process.argv[5] === undefined ? {} : {
       packageManager: {
         command: process.execPath,

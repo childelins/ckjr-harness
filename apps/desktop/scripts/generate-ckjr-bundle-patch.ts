@@ -51,11 +51,28 @@ const PLUGIN_PATCH_FILENAME = 'cordis.patch.yml'
  * 读出 ckjr-plugins/ 下有 `cordis.patch.yml` 的插件，按目录名升序。没有该文件的目录会被
  * 跳过（例如纯文档目录）。
  *
- * 为什么按固定文件名找，而不是读 `dsh.bundle.patch`：声明那个字段会让这个包**变成 bundle**。
- * 而 bundle 与插件的加载路径不同——profile 里 `name: '@ckjr/dsh-account'` 这样的行指向一个
- * 「自认为是 bundle」的包时，cordis 不会为它建 fiber，整个插件静默不激活
- * （表现为 `failed to import`，而 RPC 命名空间凭空消失）。插件只需要 patch 文件被本生成器
- * 合并进出厂层，不该同时以 bundle 身份出现在 profile 里。
+ * 为什么按固定文件名找而不是读某个 manifest 字段：这一层只关心「哪些目录贡献了行」，
+ * 固定文件名让新增插件不必再额外声明一次自己。上游也确实允许一个包既是 bundle
+ * （声明 dsh.bundle.patch）又被补丁以包名当行引用——`packages/bundle/web-app` 就是如此，
+ * 所以「声明 bundle 会让包不被加载」是错的，别照那个思路排查。
+ *
+ * 真正决定这些行能否被导入的是**解析作用域**：Loader 以 profile 目录为 base 解析行，
+ * 只有落在 runtime resolution 的 `entries` 表里的包名才能被路由到真实目录。`entries` 由两条
+ * 闭包拼成——installation scope（从 `apps/desktop-host/src/index.ts` 的 installAnchor 那个
+ * manifest 出发的 dependencies 闭包）与 profile scope（不在 installation scope 里的 bundle
+ * 层，对它自己的 dependencies 求闭包）。
+ *
+ * 本 fork 的出厂插件只靠**前者**：installAnchor 必须指向真正声明 @ckjr/\* 的那个包——也就是
+ * 外层包装包 `@deepseek-ai/dsh-desktop-runtime`（它由 `prepare-dsh.ts` 生成，dependencies 里
+ * 列了包集合中的每一个包），而不是内层的 `@deepseek-ai/dsh`（它的依赖里没有任何 @ckjr/\*）。
+ * 指错时闭包为 0 命中，行会回落到「从 <DSH_HOME>/profiles/ 起算」的原生解析，
+ * 而插件装在 <runtimeDir>/node_modules 下——于是 `ERR_MODULE_NOT_FOUND`，
+ * 且异常会被 Loader 的 catch 吞掉，最终在 app-boot 汇总成一句误导性的 `failed to import`。
+ *
+ * 另一条 profile scope 的路要 bundle 自己声明 dependencies，本 fork **刻意不走**：插件不在
+ * pnpm 工作区里（见根 pnpm-workspace.yaml 的说明）、@ckjr/\* 是未发布的 private 包，
+ * 一旦声明就必然重解析 `pnpm-lock.yaml` 里 `packages/bundle/ckjr` 的空 importer，
+ * 让 `--frozen-lockfile` 失败。改 anchor 已足够，不必两处都动。
  * @returns 参与合并的插件补丁，顺序稳定。
  */
 function readPluginPatches(): CkjrPluginPatch[] {
