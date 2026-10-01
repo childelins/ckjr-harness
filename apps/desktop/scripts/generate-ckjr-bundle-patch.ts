@@ -23,8 +23,15 @@ import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
 const REPOSITORY_ROOT = resolve(import.meta.dirname, '..', '..', '..')
-/** childelins/dsh-plugins 的检出位置，由 pnpm 工作区 glob `ckjr-plugins/*` 纳入工作区。 */
-const PLUGINS_ROOT = join(REPOSITORY_ROOT, 'ckjr-plugins')
+/**
+ * childelins/dsh-plugins 的检出位置。
+ *
+ * 默认在仓库根的 `ckjr-plugins/` —— **CI 依赖这个默认值**（工作流把插件 clone 到
+ * `ckjr-plugins/`，且不设任何环境变量）。本地把插件检出放在仓库外时用
+ * `$DSH_CKJR_PLUGINS_ROOT` 指过去：插件仓库与 fork 各自独立迭代，
+ * fork 里既不需要子目录、也不需要联接。
+ */
+const PLUGINS_ROOT = process.env.DSH_CKJR_PLUGINS_ROOT?.trim() || join(REPOSITORY_ROOT, 'ckjr-plugins')
 const BUNDLE_DIRECTORY = join(REPOSITORY_ROOT, 'packages', 'bundle', 'ckjr')
 
 /** 生成物路径。 */

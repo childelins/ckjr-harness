@@ -49,7 +49,11 @@ const AUTOMATIC_BUILD_VERSION = 'auto'
 
 /**
  * 出厂预装的创客匠人 (CKJR) 包目录：bundle 本身在 fork 里（packages/bundle/ckjr），
- * 插件在 childelins/dsh-plugins 检出到 ckjr-plugins/。
+ * 插件在 childelins/dsh-plugins 的检出里。
+ *
+ * 插件检出的默认位置是仓库根的 `ckjr-plugins/` —— **CI 依赖这个默认值**。
+ * 本地想把它放在仓库外时用 `$DSH_CKJR_PLUGINS_ROOT` 指过去，这样插件仓库与 fork
+ * 各自独立迭代，fork 里既不需要子目录、也不需要联接。
  *
  * 扫目录而不是写死清单：在 dsh-plugins 里新增插件时，fork 这边不需要改任何文件——
  * 插件会被自动打包、自动进闭包根（见 prepare-package-set.ts 的 @ckjr 前缀推导），
@@ -57,18 +61,19 @@ const AUTOMATIC_BUILD_VERSION = 'auto'
  *
  * 它们都不是 dsh 发布家族的成员（bundle 标了 private，插件包连 @deepseek-ai 前缀都没有），
  * 所以不能靠 release:pack --family dsh 拿到，必须在这里逐个 pnpm pack 进 packedCkjr。
- * @returns 相对仓库根的包目录，顺序稳定。
+ * @returns 包目录的**绝对**路径，顺序稳定。返回绝对路径是因为插件检出可能在仓库之外，
+ * 相对路径在那里没有意义。
  */
 function ckjrPackageDirectories(): string[] {
-  const directories = ['packages/bundle/ckjr']
-  const pluginsRoot = join(REPOSITORY_ROOT, 'ckjr-plugins')
+  const directories = [join(REPOSITORY_ROOT, 'packages', 'bundle', 'ckjr')]
+  const pluginsRoot = process.env.DSH_CKJR_PLUGINS_ROOT?.trim() || join(REPOSITORY_ROOT, 'ckjr-plugins')
   if (existsSync(pluginsRoot)) {
     const entries = readdirSync(pluginsRoot, { withFileTypes: true })
       .filter(entry => entry.isDirectory())
       .sort((left, right) => left.name.localeCompare(right.name))
     for (const entry of entries) {
       if (existsSync(join(pluginsRoot, entry.name, 'package.json'))) {
-        directories.push(`ckjr-plugins/${entry.name}`)
+        directories.push(join(pluginsRoot, entry.name))
       }
     }
   }
@@ -491,19 +496,22 @@ export async function packageTarget(
   // CKJR 出厂插件必须在这里就位：缺检出时立刻失败，而不是产出一个没有插件、
   // 商家登录不了却看着正常的安装包。
   const ckjrDirectories = ckjrPackageDirectories()
+  // ckjrPackageDirectories() 返回绝对路径（插件检出可能在仓库外），这里不再用 REPOSITORY_ROOT 还原。
   const missingCkjrPackages = ckjrDirectories.filter(
-    directory => !existsSync(join(REPOSITORY_ROOT, directory, 'package.json')),
+    directory => !existsSync(join(directory, 'package.json')),
   )
   if (missingCkjrPackages.length > 0) {
     throw new Error(
       `desktop package: missing CKJR plugin package(s): ${missingCkjrPackages.join(', ')}; `
-      + 'check out git@github.com:childelins/dsh-plugins.git at ckjr-plugins/ before packaging',
+      + 'check out git@github.com:childelins/dsh-plugins.git and point $DSH_CKJR_PLUGINS_ROOT at it '
+      + '(default location: ckjr-plugins/) before packaging',
     )
   }
   if (ckjrDirectories.length < 2) {
     throw new Error(
-      'desktop package: ckjr-plugins/ 里没有任何插件包；'
-      + '这样产出的安装包会缺掉登录与计费所需的 CKJR 插件，因此在此终止',
+      'desktop package: 插件检出里没有任何插件包；'
+      + '这样产出的安装包会缺掉登录与计费所需的 CKJR 插件，因此在此终止。'
+      + '检查 $DSH_CKJR_PLUGINS_ROOT（未设时默认是仓库根的 ckjr-plugins/）',
     )
   }
   rmSync(buildPaths.packedCkjr, { recursive: true, force: true })
