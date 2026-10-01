@@ -7,9 +7,9 @@
 # 不合并的话，安装包只会装上插件、却不会把它们的行接进 profile。
 #
 # 合并顺序（目录名升序）：
-#   @ckjr/dsh-account              ← ckjr-plugins/dsh-account
-#   @ckjr/dsh-client-ui-ckjr       ← ckjr-plugins/dsh-client-ui-ckjr
-#   @ckjr/dsh-llm                  ← ckjr-plugins/dsh-llm
+#   @ckjr/dsh-ckjr-account         ← ckjr-plugins/dsh-ckjr-account
+#   @ckjr/dsh-ckjr-client-ui       ← ckjr-plugins/dsh-ckjr-client-ui
+#   @ckjr/dsh-ckjr-llm             ← ckjr-plugins/dsh-ckjr-llm
 #
 # 本 bundle 必须排在 PROFILE_TEMPLATES.web.bundles 的最后：下面各插件的 disable
 # 定位的是 dsh-base / dsh-web-app 已经 insert 进来的出厂行，patch 按 id 查找，
@@ -22,8 +22,8 @@
 # 重新生成：pnpm --filter @deepseek-ai/dsh-desktop run generate:ckjr-bundle-patch
 # 校验一致：pnpm --filter @deepseek-ai/dsh-desktop run generate:ckjr-bundle-patch -- --check
 
-# ===== @ckjr/dsh-account  (ckjr-plugins/dsh-account) =====
-# @ckjr/dsh-account bundle patch.
+# ===== @ckjr/dsh-ckjr-account  (ckjr-plugins/dsh-ckjr-account) =====
+# @ckjr/dsh-ckjr-account bundle patch.
 #
 # Replaces the shipped DeepSeek account provider with the 创客匠人 (CKJR)
 # implementation of the same `deepseekAccount` service. The shipped row is
@@ -35,7 +35,7 @@
 
 - insert:
     - id: ckjr-account
-      name: '@ckjr/dsh-account'
+      name: '@ckjr/dsh-ckjr-account'
       config:
         # lecturer-api (the merchant SaaS): PKCE authorize/token endpoints.
         authOrigin: 'https://kpapi-cs.ckjr001.com'
@@ -46,8 +46,8 @@
         topUpUrl: 'https://kpapi-cs.ckjr001.com/'
         clientId: 'dsh-desktop'
 
-# ===== @ckjr/dsh-client-ui-ckjr  (ckjr-plugins/dsh-client-ui-ckjr) =====
-# @ckjr/dsh-client-ui-ckjr bundle patch.
+# ===== @ckjr/dsh-ckjr-client-ui  (ckjr-plugins/dsh-ckjr-client-ui) =====
+# @ckjr/dsh-ckjr-client-ui bundle patch.
 #
 # 两件事：
 #
@@ -62,37 +62,39 @@
 #
 # 2. insert 本插件行。
 #    模块系统按该行扫描包的 `dsh.client` 声明，浏览器侧 bundle 即作为
-#    /plugins/@ckjr/dsh-client-ui-ckjr/client.js 提供；Host 半边不注册任何东西。
+#    /plugins/@ckjr/dsh-ckjr-client-ui/client.js 提供；Host 半边不注册任何东西。
 - id: ui-settings-account
   name: '@deepseek-ai/dsh-client-ui-settings-account'
   disabled: true
 - insert:
     - id: ckjr-client-ui
-      name: '@ckjr/dsh-client-ui-ckjr'
+      name: '@ckjr/dsh-ckjr-client-ui'
 
-# ===== @ckjr/dsh-llm  (ckjr-plugins/dsh-llm) =====
-# @ckjr/dsh-llm bundle patch.
+# ===== @ckjr/dsh-ckjr-llm  (ckjr-plugins/dsh-ckjr-llm) =====
+# @ckjr/dsh-ckjr-llm bundle patch.
 #
 # Registers the `ckjr` LLM route: the ckjr-agent gateway's `/v1/messages`
 # endpoint, authenticated with `Authorization: Bearer <CKJR desktop JWT>`.
 #
 # `baseURL` is the gateway ROOT: the DeepSeek Messages adapter appends
-# `/v1/messages` itself (an exact trailing `/v1` would be reused instead).
-# The model catalogue is declared here rather than discovered from the
-# gateway's `/v1/models`, per the design (spec §4.5).
+# `/v1/messages` itself (an exact trailing `/v1` would be reused instead), and
+# this bundle appends `/v1/models` to the same root.
+#
+# 模型清单来自网关的 `GET /v1/models`（`index.js` 现取 + 进程内缓存），这里不再
+# 写死档位名：之前的 `标准` / `快速` 与网关上的真实模型无关，会误导用户。
+# 取不到时插件给出“暂时取不到模型列表”的明确状态，**不会**退回写死清单。
 - insert:
     - id: ckjr-llm
-      name: '@ckjr/dsh-llm'
+      name: '@ckjr/dsh-ckjr-llm'
       config:
         baseURL: 'https://agent-cs.myckjr.com'
-        models:
-          - id: 'qwen3.7-plus'
-            name: '标准'
-            description: '创客匠人标准档（Qwen3.7 Plus）'
-            contextWindow: 131072
-            maxTokens: 32768
-          - id: 'qwen3.7-flash'
-            name: '快速'
-            description: '创客匠人快速档（Qwen3.7 Flash）'
-            contextWindow: 131072
-            maxTokens: 32768
+        # 保留但留空：只有在需要为某个模型补充**网关未披露**的能力
+        # （如 `inputModalities`、单模型 `maxTokens`）时才按 id 添加条目。
+        # 合并时名称与上下文窗口始终以网关为准。
+        models: []
+        # 模型清单的进程内缓存时长（毫秒）。模型列表不会每次开设置页都重新拉取；
+        # 过期后由下一次读取触发后台刷新，发消息这条路径不会被网络往返卡住。
+        modelCacheTtlMs: 300000
+        # 单次请求的输出上限。沿用此前实测可用的 32768，而不是上游默认的
+        # 256000：`/v1/models` 不披露输出上限，而这个路由后面是 Qwen。
+        maxTokens: 32768

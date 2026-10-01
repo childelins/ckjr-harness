@@ -38,7 +38,7 @@ const MISSING_CHECKOUT_HINT =
 interface CkjrPluginPatch {
   /** ckjr-plugins/ 下的目录名。 */
   readonly directory: string
-  /** 包名，例如 `@ckjr/dsh-account`。 */
+  /** 包名，例如 `@ckjr/dsh-ckjr-account`。 */
   readonly name: string
   /** 该插件 cordis.patch.yml 的原文（已去掉首尾空行）。 */
   readonly content: string

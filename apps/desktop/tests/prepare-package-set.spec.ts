@@ -17,14 +17,14 @@ function ckjrPackedPackages(): [string, PackedDesktopPackage][] {
   return [
     ['@ckjr/dsh-bundle-ckjr', packed('@ckjr/dsh-bundle-ckjr', {
       dependencies: {
-        '@ckjr/dsh-account': '0.1.0',
-        '@ckjr/dsh-client-ui-ckjr': '0.1.0',
-        '@ckjr/dsh-llm': '0.1.0',
+        '@ckjr/dsh-ckjr-account': '0.1.0',
+        '@ckjr/dsh-ckjr-client-ui': '0.1.0',
+        '@ckjr/dsh-ckjr-llm': '0.1.0',
       },
     })],
-    ['@ckjr/dsh-account', packed('@ckjr/dsh-account')],
-    ['@ckjr/dsh-client-ui-ckjr', packed('@ckjr/dsh-client-ui-ckjr')],
-    ['@ckjr/dsh-llm', packed('@ckjr/dsh-llm')],
+    ['@ckjr/dsh-ckjr-account', packed('@ckjr/dsh-ckjr-account')],
+    ['@ckjr/dsh-ckjr-client-ui', packed('@ckjr/dsh-ckjr-client-ui')],
+    ['@ckjr/dsh-ckjr-llm', packed('@ckjr/dsh-ckjr-llm')],
   ]
 }
 
@@ -58,10 +58,10 @@ describe('desktop package-set selection', () => {
       ['@deepseek-ai/unused', packed('@deepseek-ai/unused')],
     ])
     expect(selectDesktopPackageClosure(available).map(entry => entry.manifest.name)).toEqual([
-      '@ckjr/dsh-account',
+      '@ckjr/dsh-ckjr-account',
       '@ckjr/dsh-bundle-ckjr',
-      '@ckjr/dsh-client-ui-ckjr',
-      '@ckjr/dsh-llm',
+      '@ckjr/dsh-ckjr-client-ui',
+      '@ckjr/dsh-ckjr-llm',
       '@deepseek-ai/cordis',
       '@deepseek-ai/dsh',
       '@deepseek-ai/dsh-base',
@@ -90,7 +90,7 @@ describe('desktop package-set selection', () => {
 
   it('requires every bundled CKJR plugin package in the packed release inputs', () => {
     const available = new Map<string, PackedDesktopPackage>([
-      ...ckjrPackedPackages().filter(([name]) => name !== '@ckjr/dsh-llm'),
+      ...ckjrPackedPackages().filter(([name]) => name !== '@ckjr/dsh-ckjr-llm'),
       ['@deepseek-ai/dsh', packed('@deepseek-ai/dsh')],
       ['@deepseek-ai/dsh-desktop-host', packed('@deepseek-ai/dsh-desktop-host')],
     ])
@@ -111,10 +111,10 @@ describe('desktop package-set selection', () => {
       ['@deepseek-ai/dsh-desktop-host', packed('@deepseek-ai/dsh-desktop-host')],
     ])
     expect(selectDesktopPackageClosure(available).map(entry => entry.manifest.name)).toEqual([
-      '@ckjr/dsh-account',
+      '@ckjr/dsh-ckjr-account',
       '@ckjr/dsh-bundle-ckjr',
-      '@ckjr/dsh-client-ui-ckjr',
-      '@ckjr/dsh-llm',
+      '@ckjr/dsh-ckjr-client-ui',
+      '@ckjr/dsh-ckjr-llm',
       '@deepseek-ai/dsh',
       '@deepseek-ai/dsh-desktop-host',
     ])
