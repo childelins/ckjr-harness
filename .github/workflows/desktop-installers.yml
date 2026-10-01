@@ -1,8 +1,9 @@
 # CKJR 桌面安装包构建：Windows x64（NSIS）+ macOS（arm64 / x64）
 #
-# 触发：workflow_dispatch（手工，可选平台）或推送 ckjr-v* 标签。
+# 触发：只由 ckjr-v<版本> 标签推送触发（没有 workflow_dispatch，见下方 on: 的说明）。
 #       不在分支 push / PR 上运行——一次完整构建要下载 Electron、编译原生模块、跑完整
 #       monorepo 构建并做打包后 smoke，成本极高（见 timeout-minutes 注释）。
+#       本地出包不走这里，直接 pnpm run package:desktop:win:x64:unsigned（见 CKJR-FORK.md）。
 #
 # 默认产物是【未签名】的 Windows NSIS 安装包，落在
 #   apps/desktop/.desktop-build/targets/win-x64/unsigned-artifacts/
@@ -38,37 +39,11 @@
 name: Desktop installers (CKJR)
 
 on:
-  workflow_dispatch:
-    inputs:
-      platforms:
-        description: '构建哪些平台（macOS 需要 Apple 签名凭据，见文件末尾“所需配置”）'
-        type: choice
-        options: [windows, macos, all]
-        default: windows
-      update_env:
-        description: '更新部署：test=无真 CDN 时的默认路径；production 必须提供 DOWNLOAD_PROD_ORIGIN'
-        type: choice
-        options: [test, production]
-        default: test
-      release_id:
-        description: 'test 部署的批次 ID（32 位小写十六进制）；留空用仓库变量，再留空按 ref 派生'
-        type: string
-        required: false
-        default: ''
-      build_version:
-        description: '可选 --build-version；留空则用产品版本，标签构建自动取 ckjr-v<版本>'
-        type: string
-        required: false
-        default: ''
-      unsigned_windows:
-        description: 'Windows 产出未签名安装包（默认）；关闭需 SafeNet EV 签名凭据，托管 runner 不具备'
-        type: boolean
-        default: true
-      plugins_ref:
-        description: 'CKJR 插件仓库 childelins/dsh-plugins 的分支或标签'
-        type: string
-        required: false
-        default: main
+  # 只由标签触发：ckjr-v<版本>。
+  # 刻意不提供 workflow_dispatch：一次安装包构建要跑满整条流水线（pnpm install 千余包、
+  # 原生模块编译、Electron 与运行时下载、NSIS 打包、打包后 smoke），手动触发很容易在
+  # 未想清部署参数时误发一版；标签天然带版本号、可追溯，也和 release 作业一一对应。
+  # 本地出包直接跑 pnpm run package:desktop:win:x64:unsigned（见 CKJR-FORK.md）。
   push:
     tags:
       - 'ckjr-v*'
@@ -102,10 +77,7 @@ jobs:
   # ---------------------------------------------------------------------------
   windows:
     name: Windows x64 installer (NSIS)
-    if: >-
-      github.event_name == 'push'
-      || inputs.platforms == 'all'
-      || inputs.platforms == 'windows'
+    # 标签触发时始终构建：未签名 NSIS 是本 fork 唯一可行的 Windows 安装包形态。
     runs-on: windows-latest
     # 冷缓存实测预期：pnpm install（1392 包）+ build:official + Electron/运行时下载 +
     # 原生模块编译 + NSIS 打包 + 打包后 smoke（真实 Office 转换）。给足 3 小时。
@@ -113,10 +85,16 @@ jobs:
     env:
       CKJR_DOTENV: apps/desktop/.env.windows
       CKJR_TARGET_DIR: apps/desktop/.desktop-build/targets/win-x64
-      CKJR_UPDATE_ENV_INPUT: ${{ inputs.update_env }}
-      CKJR_RELEASE_ID_INPUT: ${{ inputs.release_id }}
-      CKJR_BUILD_VERSION_INPUT: ${{ inputs.build_version }}
-      CKJR_UNSIGNED_INPUT: ${{ inputs.unsigned_windows }}
+      # 标签触发没有 dispatch 输入，四项一律留空，交给 preflight 的回落链决定：
+      #   unsigned    → true
+      #   update_env  → 仓库变量 CKJR_UPDATE_ENV → test
+      #   build_version → 标签名 ckjr-v<版本>
+      #   release_id  → 仓库变量 DOWNLOAD_TEST_RELEASE_ID → 按 ref 派生（仅签名构建用）
+      # 想固定某一项就设对应仓库变量，而不是把值写死在这里。
+      CKJR_UPDATE_ENV_INPUT: ''
+      CKJR_RELEASE_ID_INPUT: ''
+      CKJR_BUILD_VERSION_INPUT: ''
+      CKJR_UNSIGNED_INPUT: ''
       CKJR_UPDATE_ENV_VAR: ${{ vars.CKJR_UPDATE_ENV }}
       CKJR_APP_ID_VAR: ${{ vars.DSH_DESKTOP_APP_ID }}
       CKJR_NPM_REGISTRY_VAR: ${{ vars.DSH_DESKTOP_NPM_REGISTRY }}
@@ -158,7 +136,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           repository: ${{ env.CKJR_PLUGINS_REPOSITORY }}
-          ref: ${{ inputs.plugins_ref || 'main' }}
+          ref: main
           path: ${{ env.CKJR_PLUGINS_PATH }}
           token: ${{ secrets.CKJR_PLUGINS_TOKEN || github.token }}
           persist-credentials: false
@@ -492,10 +470,10 @@ jobs:
   # ---------------------------------------------------------------------------
   macos:
     name: macOS ${{ matrix.target }} installer
-    if: >-
-      (github.event_name == 'workflow_dispatch'
-        && (inputs.platforms == 'all' || inputs.platforms == 'macos'))
-      || (github.event_name == 'push' && vars.CKJR_BUILD_MACOS == 'true')
+    # 标签构建默认不产出 macOS 包：没有 Apple Developer ID 就无法签名与公证，而未签名/
+    # 未公证的 macOS 包在用户机器上会被 Gatekeeper 直接拒绝——产出一个装不上的包，
+    # 比明确不产出更糟。办好签名凭据后设仓库变量 CKJR_BUILD_MACOS=true，即可随标签一起构建。
+    if: vars.CKJR_BUILD_MACOS == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -520,9 +498,10 @@ jobs:
       CKJR_DOTENV: apps/desktop/.env.macos
       CKJR_TARGET_DIR: apps/desktop/.desktop-build/targets/${{ matrix.target }}
       CKJR_PACKAGE_SCRIPT: ${{ matrix.script }}
-      CKJR_UPDATE_ENV_INPUT: ${{ inputs.update_env }}
-      CKJR_RELEASE_ID_INPUT: ${{ inputs.release_id }}
-      CKJR_BUILD_VERSION_INPUT: ${{ inputs.build_version }}
+      # 同 windows 作业：标签触发没有 dispatch 输入，留空走 preflight 的回落链。
+      CKJR_UPDATE_ENV_INPUT: ''
+      CKJR_RELEASE_ID_INPUT: ''
+      CKJR_BUILD_VERSION_INPUT: ''
       CKJR_UPDATE_ENV_VAR: ${{ vars.CKJR_UPDATE_ENV }}
       CKJR_APP_ID_VAR: ${{ vars.DSH_DESKTOP_APP_ID }}
       CKJR_NPM_REGISTRY_VAR: ${{ vars.DSH_DESKTOP_NPM_REGISTRY }}
@@ -561,7 +540,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           repository: ${{ env.CKJR_PLUGINS_REPOSITORY }}
-          ref: ${{ inputs.plugins_ref || 'main' }}
+          ref: main
           path: ${{ env.CKJR_PLUGINS_PATH }}
           token: ${{ secrets.CKJR_PLUGINS_TOKEN || github.token }}
           persist-credentials: false
@@ -900,8 +879,7 @@ jobs:
     name: Attach installers to the GitHub Release
     needs: [windows, macos]
     if: >-
-      github.event_name == 'push'
-      && startsWith(github.ref, 'refs/tags/ckjr-v')
+      startsWith(github.ref, 'refs/tags/ckjr-v')
       && !cancelled()
       && needs.windows.result == 'success'
     runs-on: ubuntu-24.04
