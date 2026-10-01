@@ -83,6 +83,55 @@
 # 模型清单来自网关的 `GET /v1/models`（`index.js` 现取 + 进程内缓存），这里不再
 # 写死档位名：之前的 `标准` / `快速` 与网关上的真实模型无关，会误导用户。
 # 取不到时插件给出“暂时取不到模型列表”的明确状态，**不会**退回写死清单。
+#
+# 本层同时负责「出厂只剩创客匠人一个服务商」，三处改动缺一不可：
+#
+# 1. disable `llm-deepseek`。这一行是 `@deepseek-ai/dsh-llm-deepseek-api-key`
+#    （见 packages/bundle/base/cordis.patch.yml:525），它注册的 provider id 是
+#    **`deepseek-official`**、显示名 `DeepSeek` —— 正是设置 → 模型 里那个带红点
+#    （apiKeyEnv 未配置）的 `DeepSeek`。由本插件 disable 而不是 account 插件：
+#    这就是「去掉一个竞争的模型路由」，与 `ckjr` 路由的注册同属模型这一侧，改在
+#    一起才能一眼看出「本层注册了 ckjr、并摘掉了 deepseek」。
+#
+# 2. disable `llm-deepseek-account`（provider `deepseek-account`，显示名
+#    `DeepSeek Account`）。它在本部署里本来就是哑的：它经 `deepseekAccount`
+#    服务取令牌，而 `dsh-ckjr-account` 的 `resolveToken` 只认 CKJR 网关 origin，
+#    对 api.deepseek.com 返回 undefined，于是 discoverModels 得到空清单、被
+#    `buildModelCatalog` 按「空分组」过滤掉，界面上看不见。但它在 `ctx.llm` 里
+#    仍然是活的注册项，留着只会在日志/失败面里多一个 DeepSeek 品牌；既然要求
+#    「只保留创客匠人」，一并摘掉。
+#
+# 3. 把默认模型从 `deepseek-official/deepseek-flash` 挪到 `ckjr`。
+#    `packages/bundle/base/cordis.patch.yml:82` 的 `agent-default-model` 出厂值是
+#    `provider: deepseek-official` —— provider 一旦被 disable，新会话的默认选择就
+#    指向一个不存在的路由：模型选择器显示为不可用，首次发消息会被
+#    `session-controller` 的 `requireModel()` 以 `session/model-unavailable` 拒绝
+#    （`packages/api/session-controller/src/commands.ts:380`）。所以这两件事必须同层。
+#    注意 `initializeDefaultModel()`（会自动挑第一个可用模型）硬编码了
+#    `deepseek-account`，但它的唯一调用方是 `ui-settings-account`，已被
+#    `dsh-ckjr-client-ui` disable，不会运行，因此不能指望它兜底。
+- id: llm-deepseek
+  name: '@deepseek-ai/dsh-llm-deepseek-api-key'
+  disabled: true
+
+- id: llm-deepseek-account
+  name: '@deepseek-ai/dsh-llm-deepseek-account'
+  disabled: true
+
+# 新会话的默认落点。patch 按 id 定位并**整体替换** config，所以 provider 与 model
+# 都要给全（该行 schema 里两者皆 required，`reasoningEffort` 可选）。
+#
+# model 用 `qwen3.8-max`：2026-10-02 用桌面端已存令牌实测
+# `GET https://agent-cs.myckjr.com/v1/models` 返回
+# `[qwen3.8-max "Qwen3.8 Max", qwen3.7-plus "Qwen3.7 Plus"]`（各 1,000,000 上下文）。
+# 网关模型清单是现取的，这里写死的是**默认选中项**而不是清单本身：换成网关上的
+# 另一个 id 只影响首启默认值；若网关将来下线 `qwen3.8-max`，用户仍可在选择器里
+# 改选其它模型，`ckjr` 路由也不会因此加载失败（`resolveModel` 对未编目模型照常放行）。
+- id: agent-default-model
+  config:
+    provider: ckjr
+    model: qwen3.8-max
+
 - insert:
     - id: ckjr-llm
       name: '@ckjr/dsh-ckjr-llm'
