@@ -110,10 +110,29 @@ pnpm --filter @deepseek-ai/dsh-desktop run generate:ckjr-bundle-patch -- --check
 
 ```ts
 export const BRAND = {
-  en: 'CKJR',      // exe 名、安装目录、appId 等对 ASCII 敏感的位置
+  en: 'CKJR',      // 应用名、About 对话框、退出确认标题等
   zh: '创客匠人',   // 面向用户的界面文案
+  menu: 'CKJR Harness',  // 托盘菜单与窗口标题这类"完整产品名"
 } as const
 ```
+
+### 命名大小写规范（别漂）
+
+品牌名有两种形态，**用途不同、写法不同**，改动前先对号入座：
+
+| 用途 | 写法 | 出现在哪 |
+|---|---|---|
+| **面向用户的产品名** | `CKJR Harness` | 托盘菜单、窗口标题、UI 文案、About |
+| **技术标识符** | `ckjr-harness` | 包名、`ckjr-harness.exe`、appId、文件名、路径 |
+| **单独的品牌 / 公司名** | `CKJR` / `创客匠人` | `BRAND.en` / `BRAND.zh` |
+
+`BRAND.menu` 就是为第一行存在的：托盘与窗口标题要的是「完整产品名」，
+不是 `BRAND.en`（那只有 `CKJR`）。**不要在各处再写第二份字面量**。
+
+窗口标题的产品名来自**上游的品牌化旋钮** `DSH_CLIENT_TITLE`
+（`scripts/client-build-environment.ts` 的 `OFFICIAL_CLIENT_BUILD_ENVIRONMENT`），
+由 `packages/client/ui-layout` 的 `AppFrame` 读 `process.env` 并交给 `DocumentTitle`
+拼成 `会话名 — 产品名`。它**不是** Electron 主进程设的——改主进程没用。
 
 改品牌名 = 改这一个文件。**唯一的例外**是 `apps/desktop/scripts/electron-builder-config.mjs`：
 该文件由 electron-builder CLI 在**纯 Node** 下加载（`package-target.ts`），而 `engines.node`
@@ -161,7 +180,11 @@ git rebase upstream/master
 冲突热点就是上面表格里的文件，其中**最容易冲突**的是：
 
 1. `src/locale.ts` —— 上游会不断加文案，几乎必冲突。解决原则：保留上游新增键，把品牌相关的
-   12 个键改回 `BRAND.en` / `BRAND.zh` 引用。
+   键改回 `BRAND` 引用。**注意分两类**：多数用 `BRAND.en` / `BRAND.zh`，
+   但**托盘菜单与窗口标题那几条必须用 `BRAND.menu`（= `CKJR Harness`）**，
+   与 `scripts/client-build-environment.ts` 的 `DSH_CLIENT_TITLE` 保持一致；
+   若一律改回 `BRAND.en`/`BRAND.zh`，托盘会退化成缺产品名的写法。
+   `BRAND` 的字段会随品牌需求增加（如 `menu`），同步前先看一眼 `brand.ts` 的当前形状。
 2. `tests/expected/**` —— 跟着 `locale.ts` 一起变。**解决冲突后跑一次套件**，失败信息会直接
    指出哪些快照没跟上。
 3. `electron-builder-config.mjs` —— 上游若改了 `productName` / `artifactName` / 协议名，
