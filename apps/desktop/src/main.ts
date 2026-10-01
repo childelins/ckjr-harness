@@ -1,6 +1,7 @@
-// 必须排在最前：本模块在加载时把默认 Harness 主目录设为 ~/.ckjr 并写回环境变量，
-// 早于下面任何解析 Harness 路径的模块体执行。见 harness-home.ts 的说明。
-import './harness-home.ts'
+// 必须排在最前：本模块在加载时把 Electron 应用身份（app.name / userData）与默认
+// Harness 主目录（~/.ckjr）都固定到 CKJR，早于下面任何解析 userData 的模块体执行
+// ——包括 main.ts 自己的模块体（含 app.setAppLogsPath()）。见 fork-identity.ts。
+import './fork-identity.ts'
 import type { ProductEventMap, ProductEvent } from '@deepseek-ai/dsh-client-product-analytics/types'
 import { WINDOWS_TITLEBAR_HEIGHT } from './windows-layout.ts'
 /** Electron shell: desktop project ownership, custom protocol, windows, and lifecycle. */
