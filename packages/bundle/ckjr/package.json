@@ -1,6 +1,6 @@
 {
   "name": "@ckjr/dsh-bundle-ckjr",
-  "description": "创客匠人 (CKJR) 出厂插件 bundle：账号 Provider、LLM 路由与登录界面合成一个 profile 层",
+  "description": "创客匠人 (CKJR) 出厂 bundle：把 ckjr-plugins/ 各插件的 patch 合成一个 profile 层（cordis.patch.yml 是生成物）",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -25,10 +25,5 @@
     "bundle": {
       "patch": "./cordis.patch.yml"
     }
-  },
-  "dependencies": {
-    "@ckjr/dsh-account": "workspace:*",
-    "@ckjr/dsh-client-ui-ckjr": "workspace:*",
-    "@ckjr/dsh-llm": "workspace:*"
   }
 }

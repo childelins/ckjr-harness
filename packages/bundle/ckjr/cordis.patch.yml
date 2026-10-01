@@ -1,17 +1,29 @@
-# @ckjr/dsh-bundle-ckjr 出厂 bundle 的 patch 层。
+# ⚠️ 生成物，请勿手工编辑：本文件由 apps/desktop/scripts/generate-ckjr-bundle-patch.ts
+# 扫描 ckjr-plugins/ 里各插件的 cordis.patch.yml 合并而成。手工改动会被下一次
+# 打包或 --check 覆盖/判定为不一致；要改行为，请改对应插件自己的 cordis.patch.yml。
 #
-# 桌面端 profile 只按名字选择 bundle（app-boot 的 PROFILE_TEMPLATES.web.bundles），
-# 而 bundle 的 patch 是随包解析的：一个 bundle 只会加载它自己 dsh.bundle.patch 指到的
-# 文件，它 dependencies 里的包不会各自再贡献一层。因此三个 @ckjr 插件的 patch 必须在
-# 这里合成一份，否则安装包只会装上插件、却不会把它们的行接进 profile。
+# 为什么要合成这一层：桌面端 profile 只按名字选择 bundle，而一个 bundle 只会加载
+# 它自己 dsh.bundle.patch 指到的文件——它 dependencies 里的包不会各自再贡献一层。
+# 不合并的话，安装包只会装上插件、却不会把它们的行接进 profile。
 #
-# 下面三段与 packages 各自仓库（childelins/dsh-plugins）里 dsh-account、dsh-llm、
-# dsh-client-ui-ckjr 的 cordis.patch.yml 逐行等价，顺序 account → llm → client-ui。
-# 改动任一侧都必须同步另一侧；本文件顺序即 profile 的应用顺序，本 bundle 必须排在
-# PROFILE_TEMPLATES.web.bundles 最后：前两条 disable 针对的是 dsh-base / dsh-web-app
-# 已经 insert 进来的出厂行，patch 按 id 定位，被定位的行必须已经存在。
+# 合并顺序（目录名升序）：
+#   @ckjr/dsh-account              ← ckjr-plugins/dsh-account
+#   @ckjr/dsh-client-ui-ckjr       ← ckjr-plugins/dsh-client-ui-ckjr
+#   @ckjr/dsh-llm                  ← ckjr-plugins/dsh-llm
+#
+# 本 bundle 必须排在 PROFILE_TEMPLATES.web.bundles 的最后：下面各插件的 disable
+# 定位的是 dsh-base / dsh-web-app 已经 insert 进来的出厂行，patch 按 id 查找，
+# 被定位的行必须已经存在。
+#
+# CKJR 各插件之间没有顺序依赖：disable 的目标都来自前两层，insert 的 id 互不相同。
+# 若将来某个插件的 patch 需要引用另一个插件 insert 的行，就必须在这里引入显式顺序，
+# 而不能继续只靠目录名排序。
+#
+# 重新生成：pnpm --filter @deepseek-ai/dsh-desktop run generate:ckjr-bundle-patch
+# 校验一致：pnpm --filter @deepseek-ai/dsh-desktop run generate:ckjr-bundle-patch -- --check
 
-# --- @ckjr/dsh-account ---
+# ===== @ckjr/dsh-account  (ckjr-plugins/dsh-account) =====
+# @ckjr/dsh-account bundle patch.
 #
 # Replaces the shipped DeepSeek account provider with the 创客匠人 (CKJR)
 # implementation of the same `deepseekAccount` service. The shipped row is
@@ -34,7 +46,32 @@
         topUpUrl: 'https://kpapi-cs.ckjr001.com/'
         clientId: 'dsh-desktop'
 
-# --- @ckjr/dsh-llm ---
+# ===== @ckjr/dsh-client-ui-ckjr  (ckjr-plugins/dsh-client-ui-ckjr) =====
+# @ckjr/dsh-client-ui-ckjr bundle patch.
+#
+# 两件事：
+#
+# 1. disable 出厂的 ui-settings-account。
+#    `settings.models.sign-in` 由 ui-settings-models 声明为 kind:"single"（见其
+#    lib/client.js 的 declare 与 renderSlot），而出厂账号插件正是在这里注册
+#    SignInDialog 占住座位（ui-settings-account 的 lib/client.js:4469
+#    `ctx.slots.inject("settings.models.sign-in", ...)`）。single 座位没有更细粒度的
+#    让位方式，只能让占位者整体不加载。
+#    副作用（有意接受）：DeepSeek 的账号设置页、侧边栏账号菜单、额度/充值提示与首启
+#    引导一并消失——内部品牌化部署本就不该出现这些；登录入口与门禁由本插件接管。
+#
+# 2. insert 本插件行。
+#    模块系统按该行扫描包的 `dsh.client` 声明，浏览器侧 bundle 即作为
+#    /plugins/@ckjr/dsh-client-ui-ckjr/client.js 提供；Host 半边不注册任何东西。
+- id: ui-settings-account
+  name: '@deepseek-ai/dsh-client-ui-settings-account'
+  disabled: true
+- insert:
+    - id: ckjr-client-ui
+      name: '@ckjr/dsh-client-ui-ckjr'
+
+# ===== @ckjr/dsh-llm  (ckjr-plugins/dsh-llm) =====
+# @ckjr/dsh-llm bundle patch.
 #
 # Registers the `ckjr` LLM route: the ckjr-agent gateway's `/v1/messages`
 # endpoint, authenticated with `Authorization: Bearer <CKJR desktop JWT>`.
@@ -59,26 +96,3 @@
             description: '创客匠人快速档（Qwen3.7 Flash）'
             contextWindow: 131072
             maxTokens: 32768
-
-# --- @ckjr/dsh-client-ui-ckjr ---
-#
-# 两件事：
-#
-# 1. disable 出厂的 ui-settings-account。
-#    `settings.models.sign-in` 由 ui-settings-models 声明为 kind:"single"（见其
-#    lib/client.js 的 declare 与 renderSlot），而出厂账号插件正是在这里注册
-#    SignInDialog 占住座位（ui-settings-account 的 lib/client.js:4469
-#    `ctx.slots.inject("settings.models.sign-in", ...)`）。single 座位没有更细粒度的
-#    让位方式，只能让占位者整体不加载。
-#    副作用（有意接受）：DeepSeek 的账号设置页、侧边栏账号菜单、额度/充值提示与首启
-#    引导一并消失——内部品牌化部署本就不该出现这些；登录入口与门禁由本插件接管。
-#
-# 2. insert 本插件行。
-#    模块系统按该行扫描包的 `dsh.client` 声明，浏览器侧 bundle 即作为
-#    /plugins/@ckjr/dsh-client-ui-ckjr/client.js 提供；Host 半边不注册任何东西。
-- id: ui-settings-account
-  name: '@deepseek-ai/dsh-client-ui-settings-account'
-  disabled: true
-- insert:
-    - id: ckjr-client-ui
-      name: '@ckjr/dsh-client-ui-ckjr'

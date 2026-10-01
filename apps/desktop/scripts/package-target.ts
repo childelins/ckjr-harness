@@ -1,7 +1,7 @@
 /** Build one release target with matching Electron and dsh architecture. */
 
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { parseArgs } from 'node:util'
 import { join, resolve } from 'node:path'
 import {
@@ -23,6 +23,7 @@ import { DESKTOP_BUILD_VERSION_ENV, resolveDesktopBuildVersion, validateDesktopB
 import { suggestDesktopBuildVersion } from './desktop-build-version-discovery.ts'
 import { desktopBuildCommitEnvironment, readDesktopBuildCommit, resolveDesktopBuildCommit } from './desktop-build-commit.mjs'
 import { requireDesktopToolchain } from './desktop-toolchain-preflight.ts'
+import { generateCkjrBundlePatch } from './generate-ckjr-bundle-patch.ts'
 import { withMacOSNotarizationProxy } from './macos-notarization-proxy.ts'
 
 const APP_ROOT = resolve(import.meta.dirname, '..')
@@ -47,18 +48,32 @@ const DESKTOP_UPLOAD_CREDENTIAL_ENV_NAMES = new Set([
 const AUTOMATIC_BUILD_VERSION = 'auto'
 
 /**
- * 出厂预装的创客匠人 (CKJR) 插件包，按目录 pnpm pack 进 packedCkjr。
- * bundle 本身在 fork 里（packages/bundle/ckjr），三个插件在 childelins/dsh-plugins
- * 检出到 ckjr-plugins/。它们都不是 dsh 发布家族的成员（bundle 标了 private，
- * 插件包连 @deepseek-ai 前缀都没有），所以不能靠 release:pack --family dsh 拿到，
- * 必须在这里显式打包，再由 prepare:packages 纳入出厂包集合。
+ * 出厂预装的创客匠人 (CKJR) 包目录：bundle 本身在 fork 里（packages/bundle/ckjr），
+ * 插件在 childelins/dsh-plugins 检出到 ckjr-plugins/。
+ *
+ * 扫目录而不是写死清单：在 dsh-plugins 里新增插件时，fork 这边不需要改任何文件——
+ * 插件会被自动打包、自动进闭包根（见 prepare-package-set.ts 的 @ckjr 前缀推导），
+ * 它的 patch 也会被 generate-ckjr-bundle-patch.ts 自动合并进 bundle。
+ *
+ * 它们都不是 dsh 发布家族的成员（bundle 标了 private，插件包连 @deepseek-ai 前缀都没有），
+ * 所以不能靠 release:pack --family dsh 拿到，必须在这里逐个 pnpm pack 进 packedCkjr。
+ * @returns 相对仓库根的包目录，顺序稳定。
  */
-const CKJR_PACKAGE_DIRECTORIES = [
-  'packages/bundle/ckjr',
-  'ckjr-plugins/dsh-account',
-  'ckjr-plugins/dsh-llm',
-  'ckjr-plugins/dsh-client-ui-ckjr',
-] as const
+function ckjrPackageDirectories(): string[] {
+  const directories = ['packages/bundle/ckjr']
+  const pluginsRoot = join(REPOSITORY_ROOT, 'ckjr-plugins')
+  if (existsSync(pluginsRoot)) {
+    const entries = readdirSync(pluginsRoot, { withFileTypes: true })
+      .filter(entry => entry.isDirectory())
+      .sort((left, right) => left.name.localeCompare(right.name))
+    for (const entry of entries) {
+      if (existsSync(join(pluginsRoot, entry.name, 'package.json'))) {
+        directories.push(`ckjr-plugins/${entry.name}`)
+      }
+    }
+  }
+  return directories
+}
 
 /** Fixed platform and architecture identifiers exposed by package scripts. */
 export type DesktopPackageTargetName = 'mac-arm64' | 'mac-x64' | 'win-x64'
@@ -470,9 +485,13 @@ export async function packageTarget(
     '--pack-destination',
     buildPaths.packedDsh,
   ], buildEnv, REPOSITORY_ROOT)
+  // 合并补丁是生成物：打包前按当前 ckjr-plugins 检出重算，杜绝用上过期的补丁层。
+  // 缺检出时它自己就会抛出带检出指引的错误。
+  generateCkjrBundlePatch()
   // CKJR 出厂插件必须在这里就位：缺检出时立刻失败，而不是产出一个没有插件、
   // 商家登录不了却看着正常的安装包。
-  const missingCkjrPackages = CKJR_PACKAGE_DIRECTORIES.filter(
+  const ckjrDirectories = ckjrPackageDirectories()
+  const missingCkjrPackages = ckjrDirectories.filter(
     directory => !existsSync(join(REPOSITORY_ROOT, directory, 'package.json')),
   )
   if (missingCkjrPackages.length > 0) {
@@ -481,9 +500,15 @@ export async function packageTarget(
       + 'check out git@github.com:childelins/dsh-plugins.git at ckjr-plugins/ before packaging',
     )
   }
+  if (ckjrDirectories.length < 2) {
+    throw new Error(
+      'desktop package: ckjr-plugins/ 里没有任何插件包；'
+      + '这样产出的安装包会缺掉登录与计费所需的 CKJR 插件，因此在此终止',
+    )
+  }
   rmSync(buildPaths.packedCkjr, { recursive: true, force: true })
   mkdirSync(buildPaths.packedCkjr, { recursive: true })
-  for (const directory of CKJR_PACKAGE_DIRECTORIES) {
+  for (const directory of ckjrDirectories) {
     await execute(['--dir', directory, 'pack', '--pack-destination', buildPaths.packedCkjr], buildEnv, REPOSITORY_ROOT)
   }
   await execute(['run', 'release:pack', '--family', 'vendor', '--out', buildPaths.packedVendor, ...packArguments], buildEnv, REPOSITORY_ROOT)

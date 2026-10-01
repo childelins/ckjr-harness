@@ -2229,17 +2229,7 @@ importers:
         specifier: workspace:~
         version: link:../../../vendor/cordis
 
-  packages/bundle/ckjr:
-    dependencies:
-      '@ckjr/dsh-account':
-        specifier: workspace:*
-        version: link:../../../ckjr-plugins/dsh-account
-      '@ckjr/dsh-client-ui-ckjr':
-        specifier: workspace:*
-        version: link:../../../ckjr-plugins/dsh-client-ui-ckjr
-      '@ckjr/dsh-llm':
-        specifier: workspace:*
-        version: link:../../../ckjr-plugins/dsh-llm
+  packages/bundle/ckjr: {}
 
   packages/bundle/headless:
     dependencies:

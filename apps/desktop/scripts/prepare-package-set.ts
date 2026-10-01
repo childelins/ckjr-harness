@@ -29,12 +29,14 @@ import { resolveDesktopTargetBuildPaths } from './desktop-build-paths.mjs'
 
 const DSH_PACKAGE = '@deepseek-ai/dsh'
 /**
- * 出厂预装的创客匠人 (CKJR) 插件 bundle。
- * 它是闭包根之一：它的 dependencies 指向 ckjr-plugins/ 里检出的三个 @ckjr 插件包，
- * 因此从这一个根出发就能把 bundle 与三个插件一起选进出厂包集合。
+ * 出厂预装的创客匠人 (CKJR) 包一律作为闭包根，按包名前缀识别。
+ *
+ * 用前缀而不是写死清单：在 childelins/dsh-plugins 里新增插件后，它会被
+ * package-target.ts 自动打包进 packedCkjr，这里也就自动成为根——fork 侧不需要
+ * 改任何文件。写死清单的话，漏加一个插件只会导致安装包里静默少一个包。
  */
-const CKJR_BUNDLE_PACKAGE = '@ckjr/dsh-bundle-ckjr'
-const ROOT_PACKAGES = [DSH_PACKAGE, DESKTOP_HOST_PACKAGE, CKJR_BUNDLE_PACKAGE] as const
+const CKJR_PACKAGE_PREFIX = '@ckjr/'
+const ROOT_PACKAGES = [DSH_PACKAGE, DESKTOP_HOST_PACKAGE] as const
 const APP_ROOT = resolve(import.meta.dirname, '..')
 const REPOSITORY_ROOT = resolve(APP_ROOT, '..', '..')
 
@@ -90,6 +92,18 @@ export function selectDesktopPackageClosure(
     if (!available.has(name)) throw new Error(`desktop package set: packed inputs omit ${name}`)
     visit(name)
   }
+  // CKJR 出厂插件全部作为根：profile 的 bundle 层会按名字去找它们，少一个就会在
+  // 运行期才炸，所以这里打包进来几个就必须收几个，并且一个都不能少。
+  const ckjrPackages = [...available.keys()]
+    .filter(name => name.startsWith(CKJR_PACKAGE_PREFIX))
+    .sort((left, right) => left.localeCompare(right))
+  if (ckjrPackages.length === 0) {
+    throw new Error(
+      `desktop package set: packed inputs contain no ${CKJR_PACKAGE_PREFIX} package; `
+      + 'CKJR 插件没有被打包，安装包会缺少登录与计费所需的插件',
+    )
+  }
+  for (const name of ckjrPackages) visit(name)
   return [...selected.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([, packed]) => packed)
 }
 

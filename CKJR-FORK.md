@@ -23,37 +23,58 @@
 品牌化只改外壳，装完安装包仍要商家自己 `dsh plugin add`；本分支把三个插件变成出厂内容，
 商家装完即可直接登录。
 
-### 三个位置的分工
+### 四个位置的分工
 
 | 位置 | 内容 | 归谁 |
 |---|---|---|
-| `childelins/dsh-plugins` 仓库 | `@ckjr/dsh-account`、`@ckjr/dsh-llm`、`@ckjr/dsh-client-ui-ckjr` 三个插件包 | 另一个仓库，唯一真源 |
+| `childelins/dsh-plugins` 仓库 | 各 CKJR 插件包及其 `cordis.patch.yml` | 另一个仓库，**唯一真源** |
 | `<fork>/ckjr-plugins/` | 构建时对该仓库的检出（CI 用 `actions/checkout` 放到这个固定路径） | 不是本 fork 的内容，已写进 `.gitignore` |
-| `packages/bundle/ckjr/` | 本 fork 新增的出厂 bundle `@ckjr/dsh-bundle-ckjr` | 本 fork |
+| `packages/bundle/ckjr/` | 本 fork 的出厂 bundle `@ckjr/dsh-bundle-ckjr`，一个纯 patch 载体 | 本 fork |
+| `packages/bundle/ckjr/cordis.patch.yml` | **生成物**：扫描 `ckjr-plugins/*` 合并而成 | 由脚本生成，勿手工编辑 |
 
-### 为什么必须多一个 bundle 包
+### 为什么需要一个 bundle，以及为什么它的补丁是生成的
 
-profile 对每个 bundle 只加载它自己 `dsh.bundle.patch` 指向的文件——**bundle 的依赖不会各自贡献 patch 层**。
-三个插件各自都声明了 `dsh.bundle.patch`，但要让它们在一个 profile 里一起生效，最稳的做法是让 profile
-只选一个 bundle，由这个 bundle 的 patch 把三份 plugin patch 合成一份。
-`packages/bundle/ckjr/cordis.patch.yml` 就是这三份的逐行等价合并（顺序 account → llm → client-ui），
-改动任一侧都要同步另一侧。
+profile 对每个 bundle 只加载它自己 `dsh.bundle.patch` 指向的文件——**bundle 的依赖不会各自贡献
+patch 层**；而 profile 的 `bundles` 名单又必须是 `packages/*/*` 下的包（`scripts/verify-default-product-isolation.ts`
+的目录 glob 不含 `ckjr-plugins/*`）。两者叠加，就需要一个 fork 内的 bundle 把各插件的 patch 合成一份。
+
+**这份合成补丁是生成物**，由 `apps/desktop/scripts/generate-ckjr-bundle-patch.ts` 扫描
+`ckjr-plugins/*/cordis.patch.yml` 生成，于是：
+
+- 在 `dsh-plugins` 里**新增插件不用改本 fork 的任何文件**（打包流程会自动重新生成与重新打包）；
+- 改插件 patch 也不用同步第二处；万一生成物过期，`--check` 会判定不一致并**直接失败**，
+  而不是静默产出行为不对的安装包。
 
 ### 数据流（自下而上）
 
-1. `pnpm-workspace.yaml` 增加 `ckjr-plugins/*`，把插件检出纳入工作区；
-   `packages/bundle/ckjr` 以 `workspace:*` 依赖三个插件包。
+1. `pnpm-workspace.yaml` 增加 `ckjr-plugins/*`，把插件检出纳入工作区。
 2. `packages/boot/app-boot/src/profile.ts` 的 `PROFILE_TEMPLATES.web.bundles` **末尾**加上
    `@ckjr/dsh-bundle-ckjr`：桌面端 profile 的 bundle 列表就来自这里（`apps/desktop/src/project-manager.ts`）。
-   必须排在最后——前两条 disable 按 id 定位 `dsh-base` / `dsh-web-app` 已经 insert 的行。
-3. `apps/desktop/scripts/package-target.ts` 把 bundle 与三个插件用 `pnpm pack` 打进
-   `packed/ckjr`（`desktop-build-paths.mjs` 的 `packedCkjr`）；它们不是 `dsh` 发布家族的成员，
-   所以不走 `release:pack`。缺检出时直接报错，不产出没有插件的安装包。
-4. `apps/desktop/scripts/prepare-package-set.ts` 把 `@ckjr/dsh-bundle-ckjr` 加进 `ROOT_PACKAGES`，
-   闭包因此同时选出 bundle 与三个插件（以及它们的 `@deepseek-ai/*` peer），
-   写进 `desktop-packages.json`。
+   必须排在最后——各插件的 disable 按 id 定位 `dsh-base` / `dsh-web-app` 已经 insert 的行。
+3. `apps/desktop/scripts/package-target.ts` 先调 `generateCkjrBundlePatch()` 按当前检出重算合并补丁，
+   再把 bundle 与 `ckjr-plugins/` 下**扫到的每个**插件包用 `pnpm pack` 打进 `packed/ckjr`
+   （`desktop-build-paths.mjs` 的 `packedCkjr`）。它们不是 `dsh` 发布家族的成员，所以不走 `release:pack`。
+   缺检出、或一个插件都没扫到时直接报错，不产出没有插件的安装包。
+4. `apps/desktop/scripts/prepare-package-set.ts` 把打包进来的**每个 `@ckjr/` 包**都当闭包根
+   （按包名前缀识别，不写死清单），闭包因此选出全部插件与 bundle（以及它们的 `@deepseek-ai/*` peer），
+   写进 `desktop-packages.json`。一个 `@ckjr` 包都没有时直接报错。
 5. `apps/desktop/src/project-manager.ts` 把这个集合变成出厂运行时工程的 `file:` 依赖，
    于是 `loadProfileDirectory` 能解析到 bundle，patch 生效。
+
+### 在 dsh-plugins 里新增一个插件
+
+1. 新目录里放 `package.json`（声明 `dsh.bundle.patch`）与 `cordis.patch.yml`；
+2. 推送到 `main`。
+
+**fork 侧不需要改任何文件。** 打包时会自动扫到它、合并它的 patch、`pnpm pack` 它，
+并把它作为闭包根纳入出厂包集合。
+
+想在看构建前先确认合并结果：
+
+```bash
+pnpm --filter @deepseek-ai/dsh-desktop run generate:ckjr-bundle-patch
+pnpm --filter @deepseek-ai/dsh-desktop run generate:ckjr-bundle-patch -- --check
+```
 
 ### 限制与已知待办
 
