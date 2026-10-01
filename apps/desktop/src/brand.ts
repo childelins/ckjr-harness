@@ -12,9 +12,9 @@ export const BRAND = {
   /**
    * 托盘/菜单里的产品名。
    *
-   * 为什么单独一个字段：用户明确要求托盘菜单显示小写 `ckjr harness`（既不是 `CKJR`
+   * 为什么单独一个字段：用户明确要求托盘菜单显示小写 `CKJR Harness`（既不是 `CKJR`
    * 也不是 `创客匠人`）。托盘与 macOS 应用菜单的中英两套文案都从这一处派生，
    * 所以菜单里不会出现第二份字面量；将来用户改口径也只改这一行。
    */
-  menu: 'ckjr harness',
+  menu: 'CKJR Harness',
 } as const
