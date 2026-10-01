@@ -1,7 +1,9 @@
 # 创客匠人 (CKJR) 品牌化分支说明
 
 本仓库是 [deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) 的 fork，
-用于发布面向创客匠人商家客户的桌面端。**本分支不做功能改造**，只做品牌化 + 一处更新源安全修正。
+用于发布面向创客匠人商家客户的桌面端。品牌化本身**不做功能改造**，只做品牌化 + 一处更新源安全修正；
+`feature/ckjr-bundled-plugins` 在此基础上多了一件事：**把创客匠人插件做成出厂预装**
+（见下一节）。
 
 > 品牌化的合规依据：仓库根 `BRAND_GUIDELINES.zh.md` 明确要求第三方**不要**以 "DeepSeek Harness"
 > 作为项目名（注册商标），生态关联用 "DSH" 缩写，并允许"基于 DSH 构建"这类描述性说明。
@@ -15,6 +17,53 @@
 | fork | `git@github.com:childelins/deepseek-harness.git` |
 | 品牌化起点 | `639ed01539`（上游 `master`，DSH `0.2.0-rc.2`） |
 | 分支 | `feature/ckjr-branding` |
+
+## 出厂预装创客匠人插件（`feature/ckjr-bundled-plugins`）
+
+品牌化只改外壳，装完安装包仍要商家自己 `dsh plugin add`；本分支把三个插件变成出厂内容，
+商家装完即可直接登录。
+
+### 三个位置的分工
+
+| 位置 | 内容 | 归谁 |
+|---|---|---|
+| `childelins/dsh-plugins` 仓库 | `@ckjr/dsh-account`、`@ckjr/dsh-llm`、`@ckjr/dsh-client-ui-ckjr` 三个插件包 | 另一个仓库，唯一真源 |
+| `<fork>/ckjr-plugins/` | 构建时对该仓库的检出（CI 用 `actions/checkout` 放到这个固定路径） | 不是本 fork 的内容，已写进 `.gitignore` |
+| `packages/bundle/ckjr/` | 本 fork 新增的出厂 bundle `@ckjr/dsh-bundle-ckjr` | 本 fork |
+
+### 为什么必须多一个 bundle 包
+
+profile 对每个 bundle 只加载它自己 `dsh.bundle.patch` 指向的文件——**bundle 的依赖不会各自贡献 patch 层**。
+三个插件各自都声明了 `dsh.bundle.patch`，但要让它们在一个 profile 里一起生效，最稳的做法是让 profile
+只选一个 bundle，由这个 bundle 的 patch 把三份 plugin patch 合成一份。
+`packages/bundle/ckjr/cordis.patch.yml` 就是这三份的逐行等价合并（顺序 account → llm → client-ui），
+改动任一侧都要同步另一侧。
+
+### 数据流（自下而上）
+
+1. `pnpm-workspace.yaml` 增加 `ckjr-plugins/*`，把插件检出纳入工作区；
+   `packages/bundle/ckjr` 以 `workspace:*` 依赖三个插件包。
+2. `packages/boot/app-boot/src/profile.ts` 的 `PROFILE_TEMPLATES.web.bundles` **末尾**加上
+   `@ckjr/dsh-bundle-ckjr`：桌面端 profile 的 bundle 列表就来自这里（`apps/desktop/src/project-manager.ts`）。
+   必须排在最后——前两条 disable 按 id 定位 `dsh-base` / `dsh-web-app` 已经 insert 的行。
+3. `apps/desktop/scripts/package-target.ts` 把 bundle 与三个插件用 `pnpm pack` 打进
+   `packed/ckjr`（`desktop-build-paths.mjs` 的 `packedCkjr`）；它们不是 `dsh` 发布家族的成员，
+   所以不走 `release:pack`。缺检出时直接报错，不产出没有插件的安装包。
+4. `apps/desktop/scripts/prepare-package-set.ts` 把 `@ckjr/dsh-bundle-ckjr` 加进 `ROOT_PACKAGES`，
+   闭包因此同时选出 bundle 与三个插件（以及它们的 `@deepseek-ai/*` peer），
+   写进 `desktop-packages.json`。
+5. `apps/desktop/src/project-manager.ts` 把这个集合变成出厂运行时工程的 `file:` 依赖，
+   于是 `loadProfileDirectory` 能解析到 bundle，patch 生效。
+
+### 限制与已知待办
+
+- **已存在的 profile 不会升级**：`initProfile` 只在 profile 不存在时创建，所以从「未预装插件」的
+  版本升级上来的机器仍保留旧的 bundle 列表。要覆盖升级场景，需要在 app-boot 的
+  `INSTALLATION_OWNED_PROFILE_TUPLES` 里把旧 web 元组登记为「安装方所有」，本分支没有动它。
+- **插件 patch 被维护两遍**：插件仓库三份 + 本 fork 的合成份，必须一起改。
+- **`packages/test-support/client-runtime/src/assembly/bundle-roster.ts` 里的
+  `WEB_PROFILE_BUNDLES` 仍是旧的两项**：它是整客户端测试用的固定名单，改成三项需要那个包能解析
+  到 `@ckjr/*`，本分支没动，代价是整客户端测试不再反映真实的 web profile。
 
 ## 品牌值的唯一来源
 
