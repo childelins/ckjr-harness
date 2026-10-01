@@ -1,0 +1,964 @@
+# CKJR 桌面安装包构建：Windows x64（NSIS）+ macOS（arm64 / x64）
+#
+# 触发：workflow_dispatch（手工，可选平台）或推送 ckjr-v* 标签。
+#       不在分支 push / PR 上运行——一次完整构建要下载 Electron、编译原生模块、跑完整
+#       monorepo 构建并做打包后 smoke，成本极高（见 timeout-minutes 注释）。
+#
+# 默认产物是【未签名】的 Windows NSIS 安装包，落在
+#   apps/desktop/.desktop-build/targets/win-x64/unsigned-artifacts/
+# 再由本流程复制到 dist/desktop/ 上传为可下载 artifact。未签名安装包首次运行会被
+# Windows SmartScreen 拦截（“更多信息 → 仍要运行”），这是本 fork 目前唯一可行的
+# Windows 安装包形态：正式签名需要 SafeNet USB Token + EV 证书，GitHub 托管 runner
+# 上不存在该硬件与 SafeNet 客户端。
+#
+# ⚠️ macOS 没有“未签名”路径，本流程不假装它能跑通：
+#   - apps/desktop/scripts/package-target.ts:237  `--unsigned requires win-x64`
+#   - apps/desktop/scripts/electron-builder-config.mjs:70  `unsigned builds require Windows`
+#   - apps/desktop/scripts/electron-builder-config.mjs:164,171  mac.forceCodeSigning=true、notarize=true
+#   - apps/desktop/scripts/desktop-package-environment.mjs:96-111  即使 --prepare-only / --dir
+#     也强制要求 DSH_DESKTOP_MACOS_SIGNING_IDENTITY、TEAM_ID、可读的 CSC_LINK（本地 p12）、
+#     显式 CSC_KEY_PASSWORD 与一套完整公证凭据。
+#   因此 macOS 作业只在显式选择时运行（dispatch 选 macos/all，或 tag 构建且仓库变量
+#   CKJR_BUILD_MACOS=true），缺凭据时立即失败并列出缺失项。就算构建成功，未公证/未签名的
+#   macOS 包在用户机器上也只会被 Gatekeeper 拒绝——本流程默认不产出这种包。
+#
+# 更新源 fail-closed（见根目录 CKJR-FORK.md 与 scripts/desktop-auto-update-environment.mjs:16-25）：
+#   生产打包必须提供 DOWNLOAD_PROD_ORIGIN，本流程永不回落到官方 DeepSeek 更新源。
+#   CI 里没有真 CDN，所以默认走 test 部署（只把 <origin>/dsh-desk/<release-id>/feeds/<target>/
+#   写进应用更新配置），origin 由仓库变量给出，缺失即失败。
+#
+# 缓存策略（见下方 “Cache” 步骤注释）：
+#   - pnpm store：按 OS + lockfile 哈希缓存，fork 没有 master 播种作业，故用 actions/cache（含保存）。
+#   - apps/desktop/.desktop-build/downloads：Electron 与运行时归档的共享不可变下载缓存
+#     （apps/desktop/scripts/desktop-build-paths.mjs:59，README.md:234 说明每个归档名都含
+#     版本/平台/架构且解压前校验），按 restore-keys 复用；命中过期归档不会污染构建。
+#   - .desktop-build/targets/**（几百 MB～GB 级中间产物）不缓存：跨运行复用可变准备状态
+#     正是 desktop-build-paths.mjs 头注释要避免的事。
+
+name: Desktop installers (CKJR)
+
+on:
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: '构建哪些平台（macOS 需要 Apple 签名凭据，见文件末尾“所需配置”）'
+        type: choice
+        options: [windows, macos, all]
+        default: windows
+      update_env:
+        description: '更新部署：test=无真 CDN 时的默认路径；production 必须提供 DOWNLOAD_PROD_ORIGIN'
+        type: choice
+        options: [test, production]
+        default: test
+      release_id:
+        description: 'test 部署的批次 ID（32 位小写十六进制）；留空用仓库变量，再留空按 ref 派生'
+        type: string
+        required: false
+        default: ''
+      build_version:
+        description: '可选 --build-version；留空则用产品版本，标签构建自动取 ckjr-v<版本>'
+        type: string
+        required: false
+        default: ''
+      unsigned_windows:
+        description: 'Windows 产出未签名安装包（默认）；关闭需 SafeNet EV 签名凭据，托管 runner 不具备'
+        type: boolean
+        default: true
+      plugins_ref:
+        description: 'CKJR 插件仓库 childelins/dsh-plugins 的分支或标签'
+        type: string
+        required: false
+        default: main
+  push:
+    tags:
+      - 'ckjr-v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  # 按 ref 分组。安装包构建很重，被后来的运行取消只会白烧 runner 分钟，
+  # 还会让正在写缓存的作业半途而废，所以这里不自动取消。
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PRIMARY_NODE_VERSION: '24'
+  DSH_TELEMETRY_DISABLED: '1'
+  # CKJR 插件包随应用一起打包：在安装依赖前把插件仓库检出到 ckjr-plugins/，
+  # 由 fork 侧的 pnpm 工作区 glob（feature/ckjr-bundled-plugins）把它纳入工作区。
+  CKJR_PLUGINS_REPOSITORY: childelins/dsh-plugins
+  CKJR_PLUGINS_PATH: ckjr-plugins
+
+defaults:
+  run:
+    # 两个平台共用一套 POSIX 脚本；windows-latest 镜像自带 Git Bash。
+    shell: bash
+
+jobs:
+
+  # ---------------------------------------------------------------------------
+  # Windows x64：默认未签名 NSIS 安装包
+  # ---------------------------------------------------------------------------
+  windows:
+    name: Windows x64 installer (NSIS)
+    if: >-
+      github.event_name == 'push'
+      || inputs.platforms == 'all'
+      || inputs.platforms == 'windows'
+    runs-on: windows-latest
+    # 冷缓存实测预期：pnpm install（1392 包）+ build:official + Electron/运行时下载 +
+    # 原生模块编译 + NSIS 打包 + 打包后 smoke（真实 Office 转换）。给足 3 小时。
+    timeout-minutes: 180
+    env:
+      CKJR_DOTENV: apps/desktop/.env.windows
+      CKJR_TARGET_DIR: apps/desktop/.desktop-build/targets/win-x64
+      CKJR_UPDATE_ENV_INPUT: ${{ inputs.update_env }}
+      CKJR_RELEASE_ID_INPUT: ${{ inputs.release_id }}
+      CKJR_BUILD_VERSION_INPUT: ${{ inputs.build_version }}
+      CKJR_UNSIGNED_INPUT: ${{ inputs.unsigned_windows }}
+      CKJR_UPDATE_ENV_VAR: ${{ vars.CKJR_UPDATE_ENV }}
+      CKJR_APP_ID_VAR: ${{ vars.DSH_DESKTOP_APP_ID }}
+      CKJR_NPM_REGISTRY_VAR: ${{ vars.DSH_DESKTOP_NPM_REGISTRY }}
+      CKJR_RELEASE_ID_VAR: ${{ vars.DOWNLOAD_TEST_RELEASE_ID }}
+      CKJR_DOWNLOAD_TEST_ORIGIN: ${{ vars.DOWNLOAD_TEST_ORIGIN }}
+      CKJR_DOWNLOAD_PROD_ORIGIN: ${{ vars.DOWNLOAD_PROD_ORIGIN }}
+      CKJR_MANDATORY_UPDATE_TEST_ORIGIN: ${{ vars.DSH_DESKTOP_MANDATORY_UPDATE_TEST_ORIGIN }}
+      CKJR_MANDATORY_UPDATE_PROD_ORIGIN: ${{ vars.DSH_DESKTOP_MANDATORY_UPDATE_PROD_ORIGIN }}
+      CKJR_MANDATORY_UPDATE_CONFIG: ${{ vars.DSH_DESKTOP_MANDATORY_UPDATE_CONFIG }}
+      CKJR_MANDATORY_UPDATE_PROD_CONFIG: ${{ vars.DSH_DESKTOP_MANDATORY_UPDATE_PROD_CONFIG }}
+      CKJR_WIN_SIG_CACHE_CONCURRENCY: ${{ vars.DSH_DESKTOP_WINDOWS_SIGNATURE_CACHE_CONCURRENCY }}
+      CKJR_WIN_SIGNTOOL: ${{ vars.CKJR_WINDOWS_SIGNTOOL }}
+      CKJR_WIN_KEY_CONTAINER: ${{ vars.CKJR_WINDOWS_KEY_CONTAINER }}
+    steps:
+      # fork 本身检出到工作区根目录（actions/checkout 的默认路径）。
+      - name: Check out the fork
+        uses: actions/checkout@v6
+        with:
+          # 打包会把 HEAD 提交写进产物元数据（desktop-build-commit.mjs:23），浅克隆足够；
+          # 但 ckjr-plugins/ 作为未跟踪目录会让构建被标记 dirty，这是预期内的。
+          persist-credentials: false
+          clean: true
+
+      - name: Resolve the plugin repository token
+        env:
+          PLUGINS_TOKEN: ${{ secrets.CKJR_PLUGINS_TOKEN }}
+          PLUGINS_PUBLIC: ${{ vars.CKJR_PLUGINS_PUBLIC }}
+        run: |
+          if [ -n "${PLUGINS_TOKEN:-}" ]; then
+            echo "::notice::使用 secrets.CKJR_PLUGINS_TOKEN 读取 ${CKJR_PLUGINS_REPOSITORY}"
+          elif [ "${PLUGINS_PUBLIC:-}" = 'true' ]; then
+            echo "::notice::未配置 CKJR_PLUGINS_TOKEN，按仓库变量 CKJR_PLUGINS_PUBLIC=true 用默认 GITHUB_TOKEN 读取公开插件仓库"
+          else
+            echo "::error::无法读取插件仓库 ${CKJR_PLUGINS_REPOSITORY}：默认 GITHUB_TOKEN 只对本仓库有效，跨仓库读取私有仓库必然失败。二选一：① 配置 secrets.CKJR_PLUGINS_TOKEN（对该仓库有读权限的细粒度 PAT）；② 若该仓库是公开仓库，设置仓库变量 CKJR_PLUGINS_PUBLIC=true。"
+            exit 1
+          fi
+
+      - name: Check out the CKJR plugin packages
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ env.CKJR_PLUGINS_REPOSITORY }}
+          ref: ${{ inputs.plugins_ref || 'main' }}
+          path: ${{ env.CKJR_PLUGINS_PATH }}
+          token: ${{ secrets.CKJR_PLUGINS_TOKEN || github.token }}
+          persist-credentials: false
+
+      - name: Verify the plugin checkout
+        run: |
+          if [ ! -d "$CKJR_PLUGINS_PATH" ]; then
+            echo "::error::$CKJR_PLUGINS_PATH 不存在：插件仓库未检出，安装包不会包含 CKJR 插件。"
+            exit 1
+          fi
+          echo "插件仓库 ${CKJR_PLUGINS_REPOSITORY}@$(git -C "$CKJR_PLUGINS_PATH" rev-parse HEAD)"
+          ls -A "$CKJR_PLUGINS_PATH"
+
+      - name: Configure runner-private caches
+        run: |
+          echo "NODE_COMPILE_CACHE=${{ runner.temp }}/node-compile-cache" >> "$GITHUB_ENV"
+          echo "npm_config_devdir=${{ runner.temp }}/node-gyp" >> "$GITHUB_ENV"
+
+      - uses: pnpm/action-setup@v4
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.PRIMARY_NODE_VERSION }}
+          package-manager-cache: false
+
+      - name: Configure pnpm store path
+        id: pnpm-store
+        run: |
+          store_root="$HOME/.local/share/pnpm/store"
+          echo "PNPM_CONFIG_STORE_DIR=$store_root" >> "$GITHUB_ENV"
+          store_path=$(PNPM_CONFIG_STORE_DIR="$store_root" pnpm store path --silent)
+          echo "path=$store_path" >> "$GITHUB_OUTPUT"
+
+      # fork 没有 master 播种作业，所以这里用 actions/cache（restore + save），
+      # 而不是上游的 actions/cache/restore 只读形式。
+      - name: Cache the pnpm store
+        if: runner.environment == 'github-hosted'
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: ${{ runner.os }}-node-${{ env.PRIMARY_NODE_VERSION }}-pnpm-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-node-${{ env.PRIMARY_NODE_VERSION }}-pnpm-
+
+      # Electron 与运行时归档的共享不可变下载缓存（desktop-build-paths.mjs:59）。
+      # 归档名自带版本/平台/架构，且解压前会校验，命中旧条目不会污染构建；
+      # restore-keys 允许在 lockfile 变动后仍复用大部分归档。
+      - name: Cache the desktop download cache
+        if: runner.environment == 'github-hosted'
+        uses: actions/cache@v4
+        with:
+          path: apps/desktop/.desktop-build/downloads
+          key: ${{ runner.os }}-desktop-downloads-${{ hashFiles('apps/desktop/package.json', 'pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-desktop-downloads-
+
+      - name: Install dependencies
+        run: |
+          if pnpm install --frozen-lockfile; then
+            echo "::notice::pnpm install --frozen-lockfile 成功，依赖由 lockfile 固定。"
+          else
+            echo "::warning::--frozen-lockfile 失败（通常是 ckjr-plugins 已接入 pnpm 工作区但 pnpm-lock.yaml 未同步，报 ERR_PNPM_OUTDATED_LOCKFILE）。改用 --no-frozen-lockfile 继续：产物仍会包含 CKJR 插件，但本次依赖解析不再由 lockfile 固定。修好 lockfile 后请恢复固定安装。"
+            pnpm install --no-frozen-lockfile
+          fi
+
+      - name: Check the plugin workspace wiring
+        run: |
+          if grep -qs 'ckjr-plugins' pnpm-workspace.yaml || grep -qs 'ckjr-plugins' package.json; then
+            echo "::notice::ckjr-plugins 已接入 pnpm 工作区。"
+          else
+            echo "::error::ckjr-plugins 未接入 pnpm 工作区（pnpm-workspace.yaml 的 packages 与 package.json 的 workspaces 都没有匹配项）。此时构建仍会成功，但安装包里不会有任何 CKJR 插件——静默产出错误产物比失败更糟，因此在此终止。请先合入 feature/ckjr-bundled-plugins 的工作区改动。"
+            exit 1
+          fi
+
+      # 打包脚本只从 apps/desktop/.env.windows 读取发布字段：环境变量里的同名值会被
+      # 过滤掉（desktop-package-environment.mjs:19,57），所以 CI 必须生成该文件。
+      - name: Validate release settings and write apps/desktop/.env.windows
+        env:
+          CKJR_WIN_CER_BASE64: ${{ secrets.CKJR_WINDOWS_CER_BASE64 }}
+          CKJR_WIN_TOKEN_PIN: ${{ secrets.CKJR_WINDOWS_TOKEN_PIN }}
+        run: |
+          set -eo pipefail
+
+          # Git Bash 有 sha256sum，macOS 只有 shasum -a 256；统一走这个探测过的封装。
+          ci_sha256() {
+            if command -v sha256sum >/dev/null 2>&1; then sha256sum | cut -d' ' -f1
+            else shasum -a 256 | cut -d' ' -f1
+            fi
+          }
+
+          # ---- 未签名开关：dispatch 输入，push 时为空 → 默认未签名 ----
+          unsigned="${CKJR_UNSIGNED_INPUT:-}"
+          case "$unsigned" in
+            true|false) ;;
+            '') unsigned=true ;;
+            *) echo "::error::unsigned_windows 取值异常：$unsigned"; exit 1 ;;
+          esac
+
+          # ---- 更新部署：dispatch 输入 > 仓库变量 > test ----
+          update_env="${CKJR_UPDATE_ENV_INPUT:-}"
+          [ -n "$update_env" ] || update_env="${CKJR_UPDATE_ENV_VAR:-}"
+          [ -n "$update_env" ] || update_env=test
+          case "$update_env" in
+            test|production) ;;
+            *) echo "::error::CKJR_UPDATE_ENV 只能是 test 或 production，当前为 $update_env"; exit 1 ;;
+          esac
+
+          # ---- 构建版本：dispatch 输入 > 标签名 ckjr-v<版本> ----
+          build_version="${CKJR_BUILD_VERSION_INPUT:-}"
+          if [ -z "$build_version" ] && [ "${GITHUB_REF_TYPE:-}" = 'tag' ]; then
+            build_version="${GITHUB_REF_NAME#ckjr-v}"
+          fi
+
+          missing=''
+          need() { if [ -z "${2:-}" ]; then missing="$missing
+          - $1"; fi; }
+
+          # ---- 所有构建都必需：应用 ID 与所选部署的强更策略源 ----
+          app_id="${CKJR_APP_ID_VAR:-}"
+          [ -n "$app_id" ] || app_id='com.ckjr.harness.desktop'
+          if [ "$update_env" = 'test' ]; then
+            policy_name='DSH_DESKTOP_MANDATORY_UPDATE_TEST_ORIGIN'
+            policy_origin="${CKJR_MANDATORY_UPDATE_TEST_ORIGIN:-}"
+            need "仓库变量 DSH_DESKTOP_MANDATORY_UPDATE_TEST_ORIGIN（test 强更策略源，绝对 HTTPS origin）" "$policy_origin"
+            policy_config="${CKJR_MANDATORY_UPDATE_CONFIG:-}"
+            need '仓库变量 DSH_DESKTOP_MANDATORY_UPDATE_CONFIG（test 必须含非空 allowedAuthOrigins）' "$policy_config"
+          else
+            policy_name='DSH_DESKTOP_MANDATORY_UPDATE_PROD_ORIGIN'
+            policy_origin="${CKJR_MANDATORY_UPDATE_PROD_ORIGIN:-}"
+            need "仓库变量 DSH_DESKTOP_MANDATORY_UPDATE_PROD_ORIGIN（production 强更策略源）" "$policy_origin"
+            policy_config="${CKJR_MANDATORY_UPDATE_PROD_CONFIG:-}"
+          fi
+
+          # ---- 非未签名构建还需要自动更新源（未签名构建不需要，见 README.md:322） ----
+          release_id=''
+          if [ "$unsigned" != 'true' ]; then
+            if [ "$update_env" = 'test' ]; then
+              need '仓库变量 DOWNLOAD_TEST_ORIGIN（test 更新源，绝对 HTTPS origin）' "${CKJR_DOWNLOAD_TEST_ORIGIN:-}"
+              release_id="${CKJR_RELEASE_ID_INPUT:-}"
+              [ -n "$release_id" ] || release_id="${CKJR_RELEASE_ID_VAR:-}"
+              if [ -z "$release_id" ]; then
+                # 同一 ref 稳定派生，重跑与重试沿用同一批次目录（README.md:273 要求重试沿用同一 ID）。
+                release_id=$(printf '%s' "${GITHUB_REF}" | ci_sha256 | cut -c1-32)
+                echo "::notice::未提供 DOWNLOAD_TEST_RELEASE_ID，按 ${GITHUB_REF} 派生批次 ID：$release_id"
+              fi
+              if [ "${#release_id}" -ne 32 ] || printf '%s' "$release_id" | grep -q '[^0-9a-f]'; then
+                echo "::error::DOWNLOAD_TEST_RELEASE_ID 必须是 32 位小写十六进制字符，当前为 '$release_id'"
+                exit 1
+              fi
+            else
+              need '仓库变量 DOWNLOAD_PROD_ORIGIN（生产更新源；本 fork 绝不回落到官方 DeepSeek 源）' "${CKJR_DOWNLOAD_PROD_ORIGIN:-}"
+            fi
+            need 'secrets.CKJR_WINDOWS_CER_BASE64（EV 叶证书 .cer 的 base64）' "${CKJR_WIN_CER_BASE64:-}"
+            need 'secrets.CKJR_WINDOWS_TOKEN_PIN' "${CKJR_WIN_TOKEN_PIN:-}"
+            need '仓库变量 CKJR_WINDOWS_SIGNTOOL（SafeNet 兼容 SignTool 的本地路径）' "${CKJR_WIN_SIGNTOOL:-}"
+            need '仓库变量 CKJR_WINDOWS_KEY_CONTAINER' "${CKJR_WIN_KEY_CONTAINER:-}"
+          fi
+
+          if [ -n "$missing" ]; then
+            echo "::error::缺少必需配置（update_env=$update_env, unsigned=$unsigned）：$missing"
+            {
+              echo "## 缺少必需配置"
+              echo ""
+              echo "update_env=\`$update_env\`，unsigned=\`$unsigned\`，缺失项："
+              echo "$missing"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+          # ---- 强更策略 JSON 提前校验，避免把配置错误拖到打包中段 ----
+          if [ -n "$policy_config" ]; then
+            if ! CONFIG_JSON="$policy_config" UPDATE_ENV="$update_env" node -e '
+              const raw = process.env.CONFIG_JSON
+              let parsed
+              try { parsed = JSON.parse(raw) } catch (error) { console.error(`不是合法 JSON：${error.message}`); process.exit(1) }
+              const auth = parsed.allowedAuthOrigins
+              if (process.env.UPDATE_ENV === "test" && (!Array.isArray(auth) || auth.length === 0)) {
+                console.error("test 部署要求 DSH_DESKTOP_MANDATORY_UPDATE_CONFIG 含非空 allowedAuthOrigins 数组（desktop-policy-environment.mjs:34）")
+                process.exit(1)
+              }
+              if (process.env.UPDATE_ENV === "production" && auth !== undefined) {
+                console.error("production 部署不允许配置 allowedAuthOrigins（desktop-policy-environment.mjs:37）")
+                process.exit(1)
+              }
+            '; then
+              echo "::error::DSH_DESKTOP_MANDATORY_UPDATE_CONFIG 校验失败，见上一行输出。"
+              exit 1
+            fi
+          fi
+
+          # ---- 落盘：单引号值在 node:util parseEnv 下完全字面化，
+          #      因此 JSON、Windows 路径、含 # 或空格的密码都能原样保留。 ----
+          : > "$CKJR_DOTENV"
+          put() {
+            if [ -n "${2:-}" ]; then
+              case "$2" in
+                *"'"*) echo "::error::$1 含单引号，dotenv 单引号值无法转义；请改用不含单引号的值。"; exit 1 ;;
+              esac
+              if [ "$(printf '%s' "$2" | wc -l)" -ne 0 ]; then
+                echo "::error::$1 含换行。"
+                exit 1
+              fi
+              printf "%s='%s'\n" "$1" "$2" >> "$CKJR_DOTENV"
+            fi
+          }
+
+          put DSH_DESKTOP_APP_ID "$app_id"
+          put DSH_DESKTOP_AUTO_UPDATE_ENV "$update_env"
+          put "$policy_name" "$policy_origin"
+          put DSH_DESKTOP_MANDATORY_UPDATE_CONFIG "$policy_config"
+          put DSH_DESKTOP_NPM_REGISTRY "${CKJR_NPM_REGISTRY_VAR:-}"
+          put DSH_DESKTOP_WINDOWS_SIGNATURE_CACHE_CONCURRENCY "${CKJR_WIN_SIG_CACHE_CONCURRENCY:-}"
+          if [ "$update_env" = 'test' ] && [ "$unsigned" != 'true' ]; then
+            put DOWNLOAD_TEST_ORIGIN "$CKJR_DOWNLOAD_TEST_ORIGIN"
+            put DOWNLOAD_TEST_RELEASE_ID "$release_id"
+          fi
+          if [ "$update_env" = 'production' ] && [ "$unsigned" != 'true' ]; then
+            put DOWNLOAD_PROD_ORIGIN "$CKJR_DOWNLOAD_PROD_ORIGIN"
+          fi
+
+          # ---- 签名构建（unsigned_windows=false）的凭据。
+          #      注意：托管 runner 上没有 SafeNet 客户端与 USB Token，这条路径实际需要
+          #      自建 runner；这里只负责把凭据按打包脚本的读法准备好。 ----
+          if [ "$unsigned" != 'true' ]; then
+            signing_dir="$RUNNER_TEMP/ckjr-signing"
+            mkdir -p "$signing_dir"
+            chmod 700 "$signing_dir"
+            printf '%s' "$CKJR_WIN_CER_BASE64" | base64 --decode > "$signing_dir/ckjr-ev.cer"
+            put DSH_DESKTOP_WINDOWS_CER_FILE "$signing_dir/ckjr-ev.cer"
+            put DSH_DESKTOP_WINDOWS_SIGNTOOL "$CKJR_WIN_SIGNTOOL"
+            put DSH_DESKTOP_WINDOWS_KEY_CONTAINER "$CKJR_WIN_KEY_CONTAINER"
+            put DSH_DESKTOP_WINDOWS_TOKEN_PIN "$CKJR_WIN_TOKEN_PIN"
+          fi
+
+          echo "CKJR_UNSIGNED=$unsigned" >> "$GITHUB_ENV"
+          echo "CKJR_UPDATE_ENV=$update_env" >> "$GITHUB_ENV"
+          echo "CKJR_BUILD_VERSION=$build_version" >> "$GITHUB_ENV"
+          {
+            echo "## Windows x64 打包配置"
+            echo ""
+            echo "| 项 | 值 |"
+            echo "|---|---|"
+            echo "| 应用 ID | \`$app_id\` |"
+            echo "| 更新部署 | \`$update_env\` |"
+            echo "| 未签名 | \`$unsigned\` |"
+            echo "| 构建版本参数 | \`${build_version:-<产品版本>}\` |"
+            echo "| 批次 ID | \`${release_id:-不适用}\` |"
+            echo "| 强更策略源 | \`$policy_origin\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # 未签名：pnpm run package:desktop:win:x64:unsigned
+      #   → apps/desktop/scripts/package-target.ts win-x64 --unsigned
+      # 已签名：pnpm run package:desktop:win:x64
+      #   → apps/desktop/scripts/package-target.ts win-x64
+      # 两条命令都自带完整流水线（build:official → release:pack → prepare:runtime →
+      # prepare:packages → prepare:dsh → electron-builder → smoke-packaged-runtime），
+      # 不需要先跑 prepare:desktop（README.md:218）。
+      - name: Package the Windows installer
+        run: |
+          set -eo pipefail
+          if [ "${CKJR_UNSIGNED}" = 'true' ]; then
+            script='package:desktop:win:x64:unsigned'
+          else
+            script='package:desktop:win:x64'
+          fi
+          if [ -n "${CKJR_BUILD_VERSION:-}" ]; then
+            pnpm run "$script" -- --build-version "$CKJR_BUILD_VERSION"
+          else
+            pnpm run "$script"
+          fi
+
+      - name: Stage installers
+        run: |
+          set -eo pipefail
+          if [ "${CKJR_UNSIGNED}" = 'true' ]; then
+            source_dir="$CKJR_TARGET_DIR/unsigned-artifacts"
+          else
+            source_dir="$CKJR_TARGET_DIR/artifacts"
+          fi
+          if [ ! -d "$source_dir" ]; then
+            echo "::error::打包未产出目录 $source_dir"
+            exit 1
+          fi
+          mkdir -p dist/desktop
+          find "$source_dir" -maxdepth 1 -type f -exec cp {} dist/desktop/ \;
+          ls -l dist/desktop
+          if [ -z "$(ls -A dist/desktop)" ]; then
+            echo "::error::$source_dir 中没有产物文件"
+            exit 1
+          fi
+          # 上传目录不能是被 .gitignore 覆盖的隐藏目录：显式复制到 dist/desktop/ 再上传，
+          # 同时留一份校验和给下载者与 Release 作业。
+          # Git Bash 有 sha256sum，macOS 只有 shasum -a 256，所以先探测再选。
+          sha256_of() {
+            if command -v sha256sum >/dev/null 2>&1; then sha256sum < "$1" | cut -d' ' -f1
+            else shasum -a 256 < "$1" | cut -d' ' -f1
+            fi
+          }
+          (
+            cd dist/desktop
+            for f in ./*; do
+              case "$f" in
+                ./SHA256SUMS-*.txt) continue ;;
+              esac
+              printf '%s  %s\n' "$(sha256_of "$f")" "${f#./}"
+            done > SHA256SUMS-windows-x64.txt
+          )
+          cat dist/desktop/SHA256SUMS-windows-x64.txt
+
+      - name: Upload the Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: ckjr-desktop-windows-x64
+          path: dist/desktop/*
+          if-no-files-found: error
+          retention-days: 14
+
+  # ---------------------------------------------------------------------------
+  # macOS：必须签名 + 公证，因此缺凭据时直接失败
+  # ---------------------------------------------------------------------------
+  macos:
+    name: macOS ${{ matrix.target }} installer
+    if: >-
+      (github.event_name == 'workflow_dispatch'
+        && (inputs.platforms == 'all' || inputs.platforms == 'macos'))
+      || (github.event_name == 'push' && vars.CKJR_BUILD_MACOS == 'true')
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # mac-arm64 要求 Apple Silicon 构建主机（package-target.ts:185），mac-x64 在 Intel
+          # 或带 Rosetta 的 Apple Silicon 上均可（package-target.ts:188）。两个架构各用原生
+          # 镜像，避免依赖 Rosetta 执行 x64 产物来完成打包后 smoke。
+          # 标签依据：native/system/docs/support-matrix.md:7-8 把 darwin-arm64 记在 macos-latest、
+          # darwin-x64 记在 macos-15-intel；macos-latest 目前即 Apple Silicon。若该标签将来改指
+          # Intel，必须把 arm64 这一格钉到显式的 arm64 标签上，否则打包会以
+          # “mac-arm64 requires an Apple Silicon build host” 失败（而不是产出错误架构）。
+          - target: mac-arm64
+            runner: macos-latest
+            script: package:desktop:mac:arm64
+          - target: mac-x64
+            runner: macos-15-intel
+            script: package:desktop:mac:x64
+    runs-on: ${{ matrix.runner }}
+    # 两条公证车道 + 完整 monorepo 构建 + 原生模块编译；Apple 公证排队时间不可控。
+    timeout-minutes: 240
+    env:
+      CKJR_DOTENV: apps/desktop/.env.macos
+      CKJR_TARGET_DIR: apps/desktop/.desktop-build/targets/${{ matrix.target }}
+      CKJR_PACKAGE_SCRIPT: ${{ matrix.script }}
+      CKJR_UPDATE_ENV_INPUT: ${{ inputs.update_env }}
+      CKJR_RELEASE_ID_INPUT: ${{ inputs.release_id }}
+      CKJR_BUILD_VERSION_INPUT: ${{ inputs.build_version }}
+      CKJR_UPDATE_ENV_VAR: ${{ vars.CKJR_UPDATE_ENV }}
+      CKJR_APP_ID_VAR: ${{ vars.DSH_DESKTOP_APP_ID }}
+      CKJR_NPM_REGISTRY_VAR: ${{ vars.DSH_DESKTOP_NPM_REGISTRY }}
+      CKJR_RELEASE_ID_VAR: ${{ vars.DOWNLOAD_TEST_RELEASE_ID }}
+      CKJR_DOWNLOAD_TEST_ORIGIN: ${{ vars.DOWNLOAD_TEST_ORIGIN }}
+      CKJR_DOWNLOAD_PROD_ORIGIN: ${{ vars.DOWNLOAD_PROD_ORIGIN }}
+      CKJR_MANDATORY_UPDATE_TEST_ORIGIN: ${{ vars.DSH_DESKTOP_MANDATORY_UPDATE_TEST_ORIGIN }}
+      CKJR_MANDATORY_UPDATE_PROD_ORIGIN: ${{ vars.DSH_DESKTOP_MANDATORY_UPDATE_PROD_ORIGIN }}
+      CKJR_MANDATORY_UPDATE_CONFIG: ${{ vars.DSH_DESKTOP_MANDATORY_UPDATE_CONFIG }}
+      CKJR_MANDATORY_UPDATE_PROD_CONFIG: ${{ vars.DSH_DESKTOP_MANDATORY_UPDATE_PROD_CONFIG }}
+      CKJR_MACOS_SIGNING_IDENTITY: ${{ vars.DSH_DESKTOP_MACOS_SIGNING_IDENTITY }}
+      CKJR_MACOS_TEAM_ID: ${{ vars.DSH_DESKTOP_MACOS_TEAM_ID }}
+      CKJR_MACOS_PACK_CONCURRENCY: ${{ vars.DSH_DESKTOP_MACOS_PACK_CONCURRENCY }}
+    steps:
+      - name: Check out the fork
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          clean: true
+
+      - name: Resolve the plugin repository token
+        env:
+          PLUGINS_TOKEN: ${{ secrets.CKJR_PLUGINS_TOKEN }}
+          PLUGINS_PUBLIC: ${{ vars.CKJR_PLUGINS_PUBLIC }}
+        run: |
+          if [ -n "${PLUGINS_TOKEN:-}" ]; then
+            echo "::notice::使用 secrets.CKJR_PLUGINS_TOKEN 读取 ${CKJR_PLUGINS_REPOSITORY}"
+          elif [ "${PLUGINS_PUBLIC:-}" = 'true' ]; then
+            echo "::notice::未配置 CKJR_PLUGINS_TOKEN，按仓库变量 CKJR_PLUGINS_PUBLIC=true 用默认 GITHUB_TOKEN 读取公开插件仓库"
+          else
+            echo "::error::无法读取插件仓库 ${CKJR_PLUGINS_REPOSITORY}：默认 GITHUB_TOKEN 只对本仓库有效。二选一：① 配置 secrets.CKJR_PLUGINS_TOKEN（对该仓库有读权限的细粒度 PAT）；② 若该仓库是公开仓库，设置仓库变量 CKJR_PLUGINS_PUBLIC=true。"
+            exit 1
+          fi
+
+      - name: Check out the CKJR plugin packages
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ env.CKJR_PLUGINS_REPOSITORY }}
+          ref: ${{ inputs.plugins_ref || 'main' }}
+          path: ${{ env.CKJR_PLUGINS_PATH }}
+          token: ${{ secrets.CKJR_PLUGINS_TOKEN || github.token }}
+          persist-credentials: false
+
+      - name: Verify the plugin checkout
+        run: |
+          if [ ! -d "$CKJR_PLUGINS_PATH" ]; then
+            echo "::error::$CKJR_PLUGINS_PATH 不存在：插件仓库未检出，安装包不会包含 CKJR 插件。"
+            exit 1
+          fi
+          echo "插件仓库 ${CKJR_PLUGINS_REPOSITORY}@$(git -C "$CKJR_PLUGINS_PATH" rev-parse HEAD)"
+          ls -A "$CKJR_PLUGINS_PATH"
+
+      - name: Configure runner-private caches
+        run: |
+          echo "NODE_COMPILE_CACHE=${{ runner.temp }}/node-compile-cache" >> "$GITHUB_ENV"
+          echo "npm_config_devdir=${{ runner.temp }}/node-gyp" >> "$GITHUB_ENV"
+          echo "TMPDIR=${{ runner.temp }}" >> "$GITHUB_ENV"
+
+      - uses: pnpm/action-setup@v4
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.PRIMARY_NODE_VERSION }}
+          package-manager-cache: false
+
+      - name: Configure pnpm store path
+        id: pnpm-store
+        run: |
+          store_root="$HOME/.local/share/pnpm/store"
+          echo "PNPM_CONFIG_STORE_DIR=$store_root" >> "$GITHUB_ENV"
+          store_path=$(PNPM_CONFIG_STORE_DIR="$store_root" pnpm store path --silent)
+          echo "path=$store_path" >> "$GITHUB_OUTPUT"
+
+      - name: Cache the pnpm store
+        if: runner.environment == 'github-hosted'
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: ${{ runner.os }}-${{ runner.arch }}-node-${{ env.PRIMARY_NODE_VERSION }}-pnpm-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-node-${{ env.PRIMARY_NODE_VERSION }}-pnpm-
+
+      - name: Cache the desktop download cache
+        if: runner.environment == 'github-hosted'
+        uses: actions/cache@v4
+        with:
+          path: apps/desktop/.desktop-build/downloads
+          key: ${{ runner.os }}-${{ runner.arch }}-desktop-downloads-${{ hashFiles('apps/desktop/package.json', 'pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-desktop-downloads-
+
+      - name: Install dependencies
+        run: |
+          if pnpm install --frozen-lockfile; then
+            echo "::notice::pnpm install --frozen-lockfile 成功，依赖由 lockfile 固定。"
+          else
+            echo "::warning::--frozen-lockfile 失败（通常是 ckjr-plugins 已接入 pnpm 工作区但 pnpm-lock.yaml 未同步，报 ERR_PNPM_OUTDATED_LOCKFILE）。改用 --no-frozen-lockfile 继续：产物仍会包含 CKJR 插件，但本次依赖解析不再由 lockfile 固定。"
+            pnpm install --no-frozen-lockfile
+          fi
+
+      - name: Check the plugin workspace wiring
+        run: |
+          if grep -qs 'ckjr-plugins' pnpm-workspace.yaml || grep -qs 'ckjr-plugins' package.json; then
+            echo "::notice::ckjr-plugins 已接入 pnpm 工作区。"
+          else
+            echo "::error::ckjr-plugins 未接入 pnpm 工作区（pnpm-workspace.yaml 的 packages 与 package.json 的 workspaces 都没有匹配项）。构建仍会成功但安装包里没有 CKJR 插件，因此在此终止。请先合入 feature/ckjr-bundled-plugins 的工作区改动。"
+            exit 1
+          fi
+
+      # macOS 没有未签名路径：这里强制要求签名与公证凭据，缺任何一项立即失败。
+      - name: Validate release settings and write apps/desktop/.env.macos
+        env:
+          CKJR_MACOS_CERT_P12_BASE64: ${{ secrets.CKJR_MACOS_CERT_P12_BASE64 }}
+          CKJR_MACOS_CERT_PASSWORD: ${{ secrets.CKJR_MACOS_CERT_PASSWORD }}
+          CKJR_APPLE_API_KEY_BASE64: ${{ secrets.CKJR_APPLE_API_KEY_BASE64 }}
+          CKJR_APPLE_API_KEY_ID: ${{ secrets.CKJR_APPLE_API_KEY_ID }}
+          CKJR_APPLE_API_ISSUER: ${{ secrets.CKJR_APPLE_API_ISSUER }}
+          CKJR_APPLE_ID: ${{ secrets.CKJR_APPLE_ID }}
+          CKJR_APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.CKJR_APPLE_APP_SPECIFIC_PASSWORD }}
+          CKJR_APPLE_TEAM_ID: ${{ secrets.CKJR_APPLE_TEAM_ID }}
+        run: |
+          set -eo pipefail
+
+          # Git Bash 有 sha256sum，macOS 只有 shasum -a 256；统一走这个探测过的封装。
+          ci_sha256() {
+            if command -v sha256sum >/dev/null 2>&1; then sha256sum | cut -d' ' -f1
+            else shasum -a 256 | cut -d' ' -f1
+            fi
+          }
+
+          update_env="${CKJR_UPDATE_ENV_INPUT:-}"
+          [ -n "$update_env" ] || update_env="${CKJR_UPDATE_ENV_VAR:-}"
+          [ -n "$update_env" ] || update_env=test
+          case "$update_env" in
+            test|production) ;;
+            *) echo "::error::CKJR_UPDATE_ENV 只能是 test 或 production，当前为 $update_env"; exit 1 ;;
+          esac
+
+          build_version="${CKJR_BUILD_VERSION_INPUT:-}"
+          if [ -z "$build_version" ] && [ "${GITHUB_REF_TYPE:-}" = 'tag' ]; then
+            build_version="${GITHUB_REF_NAME#ckjr-v}"
+          fi
+
+          missing=''
+          need() { if [ -z "${2:-}" ]; then missing="$missing
+          - $1"; fi; }
+
+          app_id="${CKJR_APP_ID_VAR:-}"
+          [ -n "$app_id" ] || app_id='com.ckjr.harness.desktop'
+
+          # 自动更新源：macOS 永远是签名构建，因此必定需要。
+          release_id=''
+          if [ "$update_env" = 'test' ]; then
+            need '仓库变量 DOWNLOAD_TEST_ORIGIN（test 更新源，绝对 HTTPS origin）' "${CKJR_DOWNLOAD_TEST_ORIGIN:-}"
+            release_id="${CKJR_RELEASE_ID_INPUT:-}"
+            [ -n "$release_id" ] || release_id="${CKJR_RELEASE_ID_VAR:-}"
+            if [ -z "$release_id" ]; then
+              release_id=$(printf '%s' "${GITHUB_REF}" | ci_sha256 | cut -c1-32)
+              echo "::notice::未提供 DOWNLOAD_TEST_RELEASE_ID，按 ${GITHUB_REF} 派生批次 ID：$release_id"
+            fi
+            if [ "${#release_id}" -ne 32 ] || printf '%s' "$release_id" | grep -q '[^0-9a-f]'; then
+              echo "::error::DOWNLOAD_TEST_RELEASE_ID 必须是 32 位小写十六进制字符，当前为 '$release_id'"
+              exit 1
+            fi
+            policy_name='DSH_DESKTOP_MANDATORY_UPDATE_TEST_ORIGIN'
+            policy_origin="${CKJR_MANDATORY_UPDATE_TEST_ORIGIN:-}"
+            need '仓库变量 DSH_DESKTOP_MANDATORY_UPDATE_TEST_ORIGIN（test 强更策略源）' "$policy_origin"
+            policy_config="${CKJR_MANDATORY_UPDATE_CONFIG:-}"
+            need '仓库变量 DSH_DESKTOP_MANDATORY_UPDATE_CONFIG（test 必须含非空 allowedAuthOrigins）' "$policy_config"
+          else
+            need '仓库变量 DOWNLOAD_PROD_ORIGIN（生产更新源；本 fork 绝不回落到官方 DeepSeek 源）' "${CKJR_DOWNLOAD_PROD_ORIGIN:-}"
+            policy_name='DSH_DESKTOP_MANDATORY_UPDATE_PROD_ORIGIN'
+            policy_origin="${CKJR_MANDATORY_UPDATE_PROD_ORIGIN:-}"
+            need '仓库变量 DSH_DESKTOP_MANDATORY_UPDATE_PROD_ORIGIN（production 强更策略源）' "$policy_origin"
+            policy_config="${CKJR_MANDATORY_UPDATE_PROD_CONFIG:-}"
+          fi
+
+          # 签名身份与 Team ID（desktop-release-environment.mjs:76-86）
+          need '仓库变量 DSH_DESKTOP_MACOS_SIGNING_IDENTITY（不含 "Developer ID Application:" 前缀）' "${CKJR_MACOS_SIGNING_IDENTITY:-}"
+          need '仓库变量 DSH_DESKTOP_MACOS_TEAM_ID（10 位大写字母或数字）' "${CKJR_MACOS_TEAM_ID:-}"
+          need 'secrets.CKJR_MACOS_CERT_P12_BASE64（Developer ID Application 证书 + 私钥的 p12）' "${CKJR_MACOS_CERT_P12_BASE64:-}"
+
+          # 公证策略：API Key 优先，其次 Apple ID；两者都不能拼凑半套。
+          if [ -n "${CKJR_APPLE_API_KEY_BASE64:-}" ] || [ -n "${CKJR_APPLE_API_KEY_ID:-}" ] || [ -n "${CKJR_APPLE_API_ISSUER:-}" ]; then
+            notarization='api-key'
+            need 'secrets.CKJR_APPLE_API_KEY_BASE64（App Store Connect API 私钥 .p8 的 base64）' "${CKJR_APPLE_API_KEY_BASE64:-}"
+            need 'secrets.CKJR_APPLE_API_KEY_ID' "${CKJR_APPLE_API_KEY_ID:-}"
+            need 'secrets.CKJR_APPLE_API_ISSUER' "${CKJR_APPLE_API_ISSUER:-}"
+          elif [ -n "${CKJR_APPLE_ID:-}" ] || [ -n "${CKJR_APPLE_APP_SPECIFIC_PASSWORD:-}" ] || [ -n "${CKJR_APPLE_TEAM_ID:-}" ]; then
+            notarization='apple-id'
+            need 'secrets.CKJR_APPLE_ID' "${CKJR_APPLE_ID:-}"
+            need 'secrets.CKJR_APPLE_APP_SPECIFIC_PASSWORD' "${CKJR_APPLE_APP_SPECIFIC_PASSWORD:-}"
+            need 'secrets.CKJR_APPLE_TEAM_ID（10 位大写字母或数字）' "${CKJR_APPLE_TEAM_ID:-}"
+          else
+            notarization='none'
+            missing="$missing
+          - 公证凭据（二选一）：CKJR_APPLE_API_KEY_BASE64 + CKJR_APPLE_API_KEY_ID + CKJR_APPLE_API_ISSUER，或 CKJR_APPLE_ID + CKJR_APPLE_APP_SPECIFIC_PASSWORD + CKJR_APPLE_TEAM_ID"
+          fi
+
+          if [ -n "$missing" ]; then
+            echo "::error::macOS 打包需要完整签名与公证凭据，缺少：$missing"
+            {
+              echo "## macOS 缺少必需凭据"
+              echo ""
+              echo "macOS 没有未签名路径（electron-builder-config.mjs:70、package-target.ts:237），"
+              echo "缺少以下任一凭据时不会产出任何安装包："
+              echo "$missing"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+          # 值格式提前校验，避免把错误拖到打包中段。
+          case "$CKJR_MACOS_SIGNING_IDENTITY" in
+            'Developer ID Application:'*) echo "::error::DSH_DESKTOP_MACOS_SIGNING_IDENTITY 不能带 \"Developer ID Application:\" 前缀（desktop-release-environment.mjs:78）。"; exit 1 ;;
+          esac
+          if ! printf '%s' "$CKJR_MACOS_TEAM_ID" | grep -Eq '^[A-Z0-9]{10}$'; then
+            echo "::error::DSH_DESKTOP_MACOS_TEAM_ID 必须是 10 位大写字母或数字，当前为 '$CKJR_MACOS_TEAM_ID'。"
+            exit 1
+          fi
+          if [ -n "$policy_config" ]; then
+            if ! CONFIG_JSON="$policy_config" UPDATE_ENV="$update_env" node -e '
+              const raw = process.env.CONFIG_JSON
+              let parsed
+              try { parsed = JSON.parse(raw) } catch (error) { console.error(`不是合法 JSON：${error.message}`); process.exit(1) }
+              const auth = parsed.allowedAuthOrigins
+              if (process.env.UPDATE_ENV === "test" && (!Array.isArray(auth) || auth.length === 0)) {
+                console.error("test 部署要求 DSH_DESKTOP_MANDATORY_UPDATE_CONFIG 含非空 allowedAuthOrigins 数组（desktop-policy-environment.mjs:34）")
+                process.exit(1)
+              }
+              if (process.env.UPDATE_ENV === "production" && auth !== undefined) {
+                console.error("production 部署不允许配置 allowedAuthOrigins（desktop-policy-environment.mjs:37）")
+                process.exit(1)
+              }
+            '; then
+              echo "::error::DSH_DESKTOP_MANDATORY_UPDATE_CONFIG 校验失败，见上一行输出。"
+              exit 1
+            fi
+          fi
+
+          # 凭据落在 runner 临时目录（README.md:292 要求限制访问并在作业结束后删除），
+          # 用绝对路径写进 dotenv，避免被误当成仓库文件或产物内容。
+          signing_dir="$RUNNER_TEMP/ckjr-signing"
+          mkdir -p "$signing_dir"
+          chmod 700 "$signing_dir"
+          printf '%s' "$CKJR_MACOS_CERT_P12_BASE64" | base64 --decode > "$signing_dir/ckjr-developer-id.p12"
+          chmod 600 "$signing_dir/ckjr-developer-id.p12"
+
+          : > "$CKJR_DOTENV"
+          put() {
+            if [ -n "${2:-}" ]; then
+              case "$2" in
+                *"'"*) echo "::error::$1 含单引号，dotenv 单引号值无法转义；请改用不含单引号的值。"; exit 1 ;;
+              esac
+              if [ "$(printf '%s' "$2" | wc -l)" -ne 0 ]; then
+                echo "::error::$1 含换行。"
+                exit 1
+              fi
+              printf "%s='%s'\n" "$1" "$2" >> "$CKJR_DOTENV"
+            fi
+          }
+
+          put DSH_DESKTOP_APP_ID "$app_id"
+          put DSH_DESKTOP_AUTO_UPDATE_ENV "$update_env"
+          put "$policy_name" "$policy_origin"
+          put DSH_DESKTOP_MANDATORY_UPDATE_CONFIG "$policy_config"
+          put DSH_DESKTOP_NPM_REGISTRY "${CKJR_NPM_REGISTRY_VAR:-}"
+          put DSH_DESKTOP_MACOS_PACK_CONCURRENCY "${CKJR_MACOS_PACK_CONCURRENCY:-}"
+          put DSH_DESKTOP_MACOS_SIGNING_IDENTITY "$CKJR_MACOS_SIGNING_IDENTITY"
+          put DSH_DESKTOP_MACOS_TEAM_ID "$CKJR_MACOS_TEAM_ID"
+          put CSC_LINK "$signing_dir/ckjr-developer-id.p12"
+          # 未配置时写入显式空值：打包脚本用“显式空值”表示未加密 p12
+          # （desktop-package-environment.mjs:109-111）。
+          printf "CSC_KEY_PASSWORD='%s'\n" "${CKJR_MACOS_CERT_PASSWORD:-}" >> "$CKJR_DOTENV"
+          if [ "$update_env" = 'test' ]; then
+            put DOWNLOAD_TEST_ORIGIN "$CKJR_DOWNLOAD_TEST_ORIGIN"
+            put DOWNLOAD_TEST_RELEASE_ID "$release_id"
+          else
+            put DOWNLOAD_PROD_ORIGIN "$CKJR_DOWNLOAD_PROD_ORIGIN"
+          fi
+          if [ "$notarization" = 'api-key' ]; then
+            printf '%s' "$CKJR_APPLE_API_KEY_BASE64" | base64 --decode > "$signing_dir/AuthKey.p8"
+            chmod 600 "$signing_dir/AuthKey.p8"
+            put APPLE_API_KEY "$signing_dir/AuthKey.p8"
+            put APPLE_API_KEY_ID "$CKJR_APPLE_API_KEY_ID"
+            put APPLE_API_ISSUER "$CKJR_APPLE_API_ISSUER"
+          else
+            put APPLE_ID "$CKJR_APPLE_ID"
+            put APPLE_APP_SPECIFIC_PASSWORD "$CKJR_APPLE_APP_SPECIFIC_PASSWORD"
+            put APPLE_TEAM_ID "$CKJR_APPLE_TEAM_ID"
+          fi
+
+          echo "CKJR_UPDATE_ENV=$update_env" >> "$GITHUB_ENV"
+          echo "CKJR_BUILD_VERSION=$build_version" >> "$GITHUB_ENV"
+          {
+            echo "## macOS ${{ matrix.target }} 打包配置"
+            echo ""
+            echo "| 项 | 值 |"
+            echo "|---|---|"
+            echo "| 应用 ID | \`$app_id\` |"
+            echo "| 更新部署 | \`$update_env\` |"
+            echo "| 构建版本参数 | \`${build_version:-<产品版本>}\` |"
+            echo "| 批次 ID | \`${release_id:-不适用}\` |"
+            echo "| 签名身份 | \`$CKJR_MACOS_SIGNING_IDENTITY\`（Team \`$CKJR_MACOS_TEAM_ID\`） |"
+            echo "| 公证策略 | \`$notarization\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # pnpm run package:desktop:mac:arm64 / mac:x64
+      #   → apps/desktop/scripts/package-target.ts mac-arm64|mac-x64
+      # 该命令包含目录构建、打包后 smoke、以及 dmg/zip 两条并发公证车道，
+      # 产物（dmg / zip / zip.blockmap / nightly-mac.yml）落在
+      # apps/desktop/.desktop-build/targets/<target>/artifacts/。
+      - name: Package the macOS installer
+        run: |
+          set -eo pipefail
+          if [ -n "${CKJR_BUILD_VERSION:-}" ]; then
+            pnpm run "$CKJR_PACKAGE_SCRIPT" -- --build-version "$CKJR_BUILD_VERSION"
+          else
+            pnpm run "$CKJR_PACKAGE_SCRIPT"
+          fi
+
+      - name: Stage installers
+        run: |
+          set -eo pipefail
+          source_dir="$CKJR_TARGET_DIR/artifacts"
+          if [ ! -d "$source_dir" ]; then
+            echo "::error::打包未产出目录 $source_dir"
+            exit 1
+          fi
+          mkdir -p dist/desktop
+          find "$source_dir" -maxdepth 1 -type f -exec cp {} dist/desktop/ \;
+          ls -l dist/desktop
+          if [ -z "$(ls -A dist/desktop)" ]; then
+            echo "::error::$source_dir 中没有产物文件"
+            exit 1
+          fi
+          # Git Bash 有 sha256sum，macOS 只有 shasum -a 256，所以先探测再选。
+          sha256_of() {
+            if command -v sha256sum >/dev/null 2>&1; then sha256sum < "$1" | cut -d' ' -f1
+            else shasum -a 256 < "$1" | cut -d' ' -f1
+            fi
+          }
+          (
+            cd dist/desktop
+            for f in ./*; do
+              case "$f" in
+                ./SHA256SUMS-*.txt) continue ;;
+              esac
+              printf '%s  %s\n' "$(sha256_of "$f")" "${f#./}"
+            done > "SHA256SUMS-${{ matrix.target }}.txt"
+          )
+          cat "dist/desktop/SHA256SUMS-${{ matrix.target }}.txt"
+
+      - name: Upload the macOS installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: ckjr-desktop-${{ matrix.target }}
+          path: dist/desktop/*
+          if-no-files-found: error
+          retention-days: 14
+
+      # README.md:292 要求 CI 在作业结束后删除临时凭据。
+      - name: Remove temporary signing credentials
+        if: always()
+        run: |
+          rm -rf "$RUNNER_TEMP/ckjr-signing"
+          rm -f apps/desktop/.env.macos
+          echo "已删除 $RUNNER_TEMP/ckjr-signing 与 apps/desktop/.env.macos"
+
+  # ---------------------------------------------------------------------------
+  # 标签构建：把安装包挂到 GitHub Release（只用默认 GITHUB_TOKEN，不引入额外机密）
+  # ---------------------------------------------------------------------------
+  release:
+    name: Attach installers to the GitHub Release
+    needs: [windows, macos]
+    if: >-
+      github.event_name == 'push'
+      && startsWith(github.ref, 'refs/tags/ckjr-v')
+      && !cancelled()
+      && needs.windows.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      # 创建/更新 Release 并上传附件需要写权限；这是本工作流唯一的写权限。
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ckjr-desktop-*
+          path: dist/desktop
+          merge-multiple: true
+
+      - name: Publish the installers on the tag's release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eo pipefail
+          ls -l dist/desktop
+          if [ -z "$(ls -A dist/desktop)" ]; then
+            echo "::error::没有可上传的安装包。"
+            exit 1
+          fi
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/desktop/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" dist/desktop/* \
+              --title "$GITHUB_REF_NAME" --generate-notes --verify-tag
+          fi
+          if [ "${{ needs.macos.result }}" != 'success' ]; then
+            echo "::warning::本次 Release 只包含 Windows 安装包：macOS 作业结果为 '${{ needs.macos.result }}'（未配置 Apple 凭据时 tag 构建不会运行 macOS 作业，除非设置仓库变量 CKJR_BUILD_MACOS=true）。"
+          fi
+
+# ---------------------------------------------------------------------------
+# 所需配置（仓库 Settings → Secrets and variables → Actions）
+#
+# 变量（Variables）：
+#   DSH_DESKTOP_APP_ID                         可选，默认 com.ckjr.harness.desktop
+#   DSH_DESKTOP_MANDATORY_UPDATE_TEST_ORIGIN   test 强更策略源（HTTPS origin，必填）
+#   DSH_DESKTOP_MANDATORY_UPDATE_CONFIG        test 策略 JSON，必须含非空 allowedAuthOrigins，
+#                                              例：{"allowedAuthOrigins":["https://login.example.com"]}
+#   DSH_DESKTOP_MANDATORY_UPDATE_PROD_ORIGIN   production 强更策略源（HTTPS origin）
+#   DSH_DESKTOP_MANDATORY_UPDATE_PROD_CONFIG   production 策略 JSON，不得含 allowedAuthOrigins（可选）
+#   DOWNLOAD_TEST_ORIGIN                       test 更新源（签名/macOS 构建必填）
+#   DOWNLOAD_TEST_RELEASE_ID                   可选；留空按 ref 派生稳定批次 ID
+#   DOWNLOAD_PROD_ORIGIN                       production 更新源（生产打包必填，绝无回落）
+#   DSH_DESKTOP_NPM_REGISTRY                   可选，如 https://registry.npmmirror.com
+#   DSH_DESKTOP_MACOS_SIGNING_IDENTITY         macOS 必填（不含 "Developer ID Application:" 前缀）
+#   DSH_DESKTOP_MACOS_TEAM_ID                  macOS 必填（10 位大写字母/数字）
+#   DSH_DESKTOP_MACOS_PACK_CONCURRENCY         可选，默认 4
+#   DSH_DESKTOP_WINDOWS_SIGNATURE_CACHE_CONCURRENCY  可选，1-8
+#   CKJR_UPDATE_ENV                            可选，tag 构建的更新部署（test|production），默认 test
+#   CKJR_BUILD_MACOS                           可选，'true' 时 tag 构建也跑 macOS 作业
+#   CKJR_PLUGINS_PUBLIC                        可选，'true' 表示插件仓库公开、可用默认 GITHUB_TOKEN
+#   CKJR_WINDOWS_SIGNTOOL / CKJR_WINDOWS_KEY_CONTAINER  仅签名 Windows 构建需要
+#
+# 机密（Secrets）：
+#   CKJR_PLUGINS_TOKEN             读 childelins/dsh-plugins；缺失且 CKJR_PLUGINS_PUBLIC≠true 时立即失败
+#   CKJR_MACOS_CERT_P12_BASE64     Developer ID Application p12（base64）
+#   CKJR_MACOS_CERT_PASSWORD       p12 导出密码；留空表示未加密 p12
+#   CKJR_APPLE_API_KEY_BASE64 / CKJR_APPLE_API_KEY_ID / CKJR_APPLE_API_ISSUER   公证策略 A
+#   CKJR_APPLE_ID / CKJR_APPLE_APP_SPECIFIC_PASSWORD / CKJR_APPLE_TEAM_ID        公证策略 B
+#   CKJR_WINDOWS_CER_BASE64 / CKJR_WINDOWS_TOKEN_PIN                             仅签名 Windows 构建
+#
+# 缺失时的行为：全部 fail-closed。校验步骤在打包前收集缺失项，打印 ::error:: 并写入
+# job summary 后以非零码退出；更新源尤其如此——本 fork 不会回落到官方 DeepSeek 源
+# （apps/desktop/scripts/desktop-auto-update-environment.mjs:16-25）。
+# ---------------------------------------------------------------------------
