@@ -44,9 +44,18 @@ interface CkjrPluginPatch {
   readonly content: string
 }
 
+/** 插件补丁的固定文件名。 */
+const PLUGIN_PATCH_FILENAME = 'cordis.patch.yml'
+
 /**
- * 读出 ckjr-plugins/ 下所有声明了 `dsh.bundle.patch` 的插件，按目录名升序。
- * 没声明该字段的目录会被跳过：它们是普通插件，不参与 profile 的层合成。
+ * 读出 ckjr-plugins/ 下有 `cordis.patch.yml` 的插件，按目录名升序。没有该文件的目录会被
+ * 跳过（例如纯文档目录）。
+ *
+ * 为什么按固定文件名找，而不是读 `dsh.bundle.patch`：声明那个字段会让这个包**变成 bundle**。
+ * 而 bundle 与插件的加载路径不同——profile 里 `name: '@ckjr/dsh-account'` 这样的行指向一个
+ * 「自认为是 bundle」的包时，cordis 不会为它建 fiber，整个插件静默不激活
+ * （表现为 `failed to import`，而 RPC 命名空间凭空消失）。插件只需要 patch 文件被本生成器
+ * 合并进出厂层，不该同时以 bundle 身份出现在 profile 里。
  * @returns 参与合并的插件补丁，顺序稳定。
  */
 function readPluginPatches(): CkjrPluginPatch[] {
@@ -60,25 +69,15 @@ function readPluginPatches(): CkjrPluginPatch[] {
   for (const entry of entries) {
     const manifestPath = join(PLUGINS_ROOT, entry.name, 'package.json')
     if (!existsSync(manifestPath)) continue
-    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
-      name?: unknown
-      dsh?: { bundle?: { patch?: unknown } }
-    }
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { name?: unknown }
     const name = manifest.name
     if (typeof name !== 'string' || name === '') throw new Error(`${manifestPath}: 缺少包名`)
-    const declared = manifest.dsh?.bundle?.patch
-    if (declared === undefined) continue
-    if (typeof declared !== 'string') {
-      throw new Error(`${manifestPath}: dsh.bundle.patch 必须是单个文件路径；一个插件贡献一层就够`)
-    }
-    const patchPath = join(PLUGINS_ROOT, entry.name, declared)
-    if (!existsSync(patchPath)) {
-      throw new Error(`${manifestPath}: dsh.bundle.patch 指向的文件不存在：${declared}`)
-    }
+    const patchPath = join(PLUGINS_ROOT, entry.name, PLUGIN_PATCH_FILENAME)
+    if (!existsSync(patchPath)) continue
     patches.push({ directory: entry.name, name, content: readFileSync(patchPath, 'utf8').trim() })
   }
   if (patches.length === 0) {
-    throw new Error(`CKJR bundle patch: ${PLUGINS_ROOT} 下没有任何声明 dsh.bundle.patch 的插件`)
+    throw new Error(`CKJR bundle patch: ${PLUGINS_ROOT} 下没有任何含 ${PLUGIN_PATCH_FILENAME} 的插件`)
   }
   return patches
 }
