@@ -1,10 +1,16 @@
 packages:
   - vendor/*
   - packages/*/*
-  # 创客匠人 (CKJR) 出厂插件：另一个仓库 childelins/dsh-plugins 检出在 ckjr-plugins/，
-  # 由 packages/bundle/ckjr 以 workspace:* 依赖，再由桌面端打包逐个 pnpm pack 进本地包集合。
-  # 构建（无论本地还是 CI）都必须先有这份检出，否则 pnpm install 会因找不到工作区包而失败。
-  - ckjr-plugins/*
+  # 创客匠人 (CKJR) 出厂插件刻意【不】列在这里：childelins/dsh-plugins 检出在
+  # ckjr-plugins/，但把它当成工作区成员会给 pnpm-lock.yaml 引入 ckjr-plugins/* 的
+  # importer；插件声明的是普通 peer 版本范围（不是 workspace:），pnpm 会为这些
+  # importer 自动安装 peer，于是锁文件必须全量重解析——重解析又会浮动传递依赖
+  # （实测 micromark-util-types 2.0.2 → 2.0.3，与仍钉在 2.0.2 的消费者产生类型身份
+  # 冲突，ui-primitives 的 markdown/parse.ts 直接编译失败）。
+  # 插件不需要成为工作区成员：它们没有 workspace: 依赖，package-target.ts 按目录
+  # pnpm pack，prepare-package-set.ts 按打包产物（不是工作区成员资格）推导闭包根。
+  # 因此锁文件只需为 packages/bundle/ckjr 增加一个空 importer，--frozen-lockfile
+  # 就能一直通过，CI 永远不会走到会浮动的降级分支。
   # The Landlock launcher is developed with its harness consumers but keeps
   # its native build and publication scripts under native/system.
   - native/system

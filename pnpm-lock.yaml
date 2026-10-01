@@ -2193,6 +2193,8 @@ importers:
         specifier: workspace:~
         version: link:../../../vendor/cordis
 
+  packages/bundle/ckjr: {}
+
   packages/bundle/headless:
     dependencies:
       '@deepseek-ai/dsh-brand':
