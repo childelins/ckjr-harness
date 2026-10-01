@@ -410,6 +410,7 @@
     { "path": "./packages/acp/acp" },
     { "path": "./packages/bundle/acp-app" },
     { "path": "./packages/bundle/base" },
+    { "path": "./packages/bundle/ckjr" },
     { "path": "./packages/bundle/headless" },
     { "path": "./packages/bundle/sdk-app" },
     { "path": "./packages/bundle/sdk-minimal" },
