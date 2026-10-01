@@ -419,6 +419,15 @@ jobs:
       # prepare:packages → prepare:dsh → electron-builder → smoke-packaged-runtime），
       # 不需要先跑 prepare:desktop（README.md:218）。
       - name: Package the Windows installer
+        # Git Bash 里 /usr/bin/tar 是 GNU tar，它把 "D:\a\..." 里的冒号当成远程主机
+        # （host:path 语法），于是 prepare:packages 读本地 tarball 时报
+        # "tar (child): Cannot connect to D: resolve failed" 并中断。
+        # Windows 自带的 C:\Windows\System32\tar.exe 是 bsdtar、没有这个行为，开发者在
+        # PowerShell 里跑就没事——只有本流程用 bash 才会踩到。
+        # --force-local 让 GNU tar 把带冒号的归档名一律当本地文件；该步骤只在 Windows 跑，
+        # 不必担心 macOS 的 bsdtar 不认这个选项（所以也不适合写进上游脚本）。
+        env:
+          TAR_OPTIONS: '--force-local'
         run: |
           set -eo pipefail
           if [ "${CKJR_UNSIGNED}" = 'true' ]; then
