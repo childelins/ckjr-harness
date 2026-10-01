@@ -78,13 +78,31 @@ pnpm --filter @deepseek-ai/dsh-desktop run generate:ckjr-bundle-patch -- --check
 
 ### 限制与已知待办
 
-- **已存在的 profile 不会升级**：`initProfile` 只在 profile 不存在时创建，所以从「未预装插件」的
-  版本升级上来的机器仍保留旧的 bundle 列表。要覆盖升级场景，需要在 app-boot 的
-  `INSTALLATION_OWNED_PROFILE_TUPLES` 里把旧 web 元组登记为「安装方所有」，本分支没有动它。
-- **插件 patch 被维护两遍**：插件仓库三份 + 本 fork 的合成份，必须一起改。
 - **`packages/test-support/client-runtime/src/assembly/bundle-roster.ts` 里的
   `WEB_PROFILE_BUNDLES` 仍是旧的两项**：它是整客户端测试用的固定名单，改成三项需要那个包能解析
   到 `@ckjr/*`，本分支没动，代价是整客户端测试不再反映真实的 web profile。
+- **安装器品牌素材的分辨率受源图限制**：`apps/desktop/installer/assets/*.png` 目前由
+  `lecturercs.myckjr.com/favicon.ico`（只有 32×32）放大生成，在小尺寸显示尚可，
+  但应用图标（exe/任务栏，需要 256px 以上）没有跟着换。拿到高清原图后重新生成即可。
+
+## Harness 主目录：`~/.ckjr`
+
+**本 fork 的桌面端默认使用 `~/.ckjr`，与官方的 `~/.dsh` 分开。** 由
+`apps/desktop/src/harness-home.ts` 在模块加载时把默认值写回 `$DSH_HOME`；该模块在
+`main.ts` 的 import 列表里排第一位，确保早于任何解析 Harness 路径的模块体执行。
+写回环境变量而不是只改桌面端自己的解析，是因为桌面端解析出的路径会通过继承的环境变量
+传给它的 Host 子进程——设定一次，desktop 与它拉起的 runtime 就落在同一个主目录上。
+
+分开的两个原因：
+
+1. **共用会让两个应用读写同一个 profile 与会话**：官方实例正在运行时，CKJR 实例会接到
+   同一个 runtime 上，表现为「点开 CKJR 却进了官方应用」。
+2. **共用会让已存在的 profile 挡住本 fork 的 bundle 名单**：`initProfile` 只在 profile
+   不存在时创建，所以从官方版升级上来的机器会保留官方的 bundle 列表，CKJR 的插件层永远
+   不生效。主目录分开后这一条自然消失。
+
+`$DSH_HOME` 显式设置时一律优先——开发与测试照旧可以指向隔离目录。
+
 
 ## 品牌值的唯一来源
 

@@ -1,3 +1,6 @@
+// 必须排在最前：本模块在加载时把默认 Harness 主目录设为 ~/.ckjr 并写回环境变量，
+// 早于下面任何解析 Harness 路径的模块体执行。见 harness-home.ts 的说明。
+import './harness-home.ts'
 import type { ProductEventMap, ProductEvent } from '@deepseek-ai/dsh-client-product-analytics/types'
 import { WINDOWS_TITLEBAR_HEIGHT } from './windows-layout.ts'
 /** Electron shell: desktop project ownership, custom protocol, windows, and lifecycle. */
