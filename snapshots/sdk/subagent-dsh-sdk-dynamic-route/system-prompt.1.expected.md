@@ -1,4 +1,4 @@
-You are an AI agent powered by CKJR Harness.
+You are an AI agent powered by DeepSeek Harness.
 
 Echo where you run.
 
