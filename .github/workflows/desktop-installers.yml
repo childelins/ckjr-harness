@@ -1,6 +1,6 @@
 # CKJR 桌面安装包构建：Windows x64（NSIS）+ macOS（arm64 / x64）
 #
-# 触发：只由 ckjr-v<版本> 标签推送触发（没有 workflow_dispatch，见下方 on: 的说明）。
+# 触发：只由 ckjr-harness-v<版本> 标签推送触发（没有 workflow_dispatch，见下方 on: 的说明）。
 #       不在分支 push / PR 上运行——一次完整构建要下载 Electron、编译原生模块、跑完整
 #       monorepo 构建并做打包后 smoke，成本极高（见 timeout-minutes 注释）。
 #       本地出包不走这里，直接 pnpm run package:desktop:win:x64:unsigned（见 CKJR-FORK.md）。
@@ -39,14 +39,14 @@
 name: Desktop installers (CKJR)
 
 on:
-  # 只由标签触发：ckjr-v<版本>。
+  # 只由标签触发：ckjr-harness-v<版本>。
   # 刻意不提供 workflow_dispatch：一次安装包构建要跑满整条流水线（pnpm install 千余包、
   # 原生模块编译、Electron 与运行时下载、NSIS 打包、打包后 smoke），手动触发很容易在
   # 未想清部署参数时误发一版；标签天然带版本号、可追溯，也和 release 作业一一对应。
   # 本地出包直接跑 pnpm run package:desktop:win:x64:unsigned（见 CKJR-FORK.md）。
   push:
     tags:
-      - 'ckjr-v*'
+      - 'ckjr-harness-v*'
 
 permissions:
   contents: read
@@ -88,7 +88,7 @@ jobs:
       # 标签触发没有 dispatch 输入，四项一律留空，交给 preflight 的回落链决定：
       #   unsigned    → true
       #   update_env  → 仓库变量 CKJR_UPDATE_ENV → test
-      #   build_version → 标签名 ckjr-v<版本>
+      #   build_version → 标签名 ckjr-harness-v<版本>
       #   release_id  → 仓库变量 DOWNLOAD_TEST_RELEASE_ID → 按 ref 派生（仅签名构建用）
       # 想固定某一项就设对应仓库变量，而不是把值写死在这里。
       CKJR_UPDATE_ENV_INPUT: ''
@@ -268,10 +268,10 @@ jobs:
             *) echo "::error::CKJR_UPDATE_ENV 只能是 test 或 production，当前为 $update_env"; exit 1 ;;
           esac
 
-          # ---- 构建版本：dispatch 输入 > 标签名 ckjr-v<版本> ----
+          # ---- 构建版本：dispatch 输入 > 标签名 ckjr-harness-v<版本> ----
           build_version="${CKJR_BUILD_VERSION_INPUT:-}"
           if [ -z "$build_version" ] && [ "${GITHUB_REF_TYPE:-}" = 'tag' ]; then
-            build_version="${GITHUB_REF_NAME#ckjr-v}"
+            build_version="${GITHUB_REF_NAME#ckjr-harness-v}"
           fi
 
           missing=''
@@ -763,7 +763,7 @@ jobs:
 
           build_version="${CKJR_BUILD_VERSION_INPUT:-}"
           if [ -z "$build_version" ] && [ "${GITHUB_REF_TYPE:-}" = 'tag' ]; then
-            build_version="${GITHUB_REF_NAME#ckjr-v}"
+            build_version="${GITHUB_REF_NAME#ckjr-harness-v}"
           fi
 
           missing=''
@@ -998,7 +998,7 @@ jobs:
     name: Attach installers to the GitHub Release
     needs: [windows, macos]
     if: >-
-      startsWith(github.ref, 'refs/tags/ckjr-v')
+      startsWith(github.ref, 'refs/tags/ckjr-harness-v')
       && !cancelled()
       && needs.windows.result == 'success'
     runs-on: ubuntu-24.04
