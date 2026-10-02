@@ -8,6 +8,7 @@
 #
 # 合并顺序（目录名升序）：
 #   @ckjr/dsh-ckjr-account         ← ckjr-plugins/dsh-ckjr-account
+#   @ckjr/dsh-ckjr-brand           ← ckjr-plugins/dsh-ckjr-brand
 #   @ckjr/dsh-ckjr-client-ui       ← ckjr-plugins/dsh-ckjr-client-ui
 #   @ckjr/dsh-ckjr-llm             ← ckjr-plugins/dsh-ckjr-llm
 #
@@ -45,6 +46,62 @@
         usageUrl: 'https://kpapi-cs.ckjr001.com/'
         topUpUrl: 'https://kpapi-cs.ckjr001.com/'
         clientId: 'dsh-desktop'
+
+# ===== @ckjr/dsh-ckjr-brand  (ckjr-plugins/dsh-ckjr-brand) =====
+# @ckjr/dsh-ckjr-brand bundle patch.
+#
+# 本层是"出厂品牌与隐私默认"：两件事都属于"上游有开关，但不该让商家用户自己去关"的项。
+#
+# ── 1. disable `session-log-deepseek` ─────────────────────────────────────────
+#
+# 出厂行在 `packages/bundle/base/cordis.patch.yml:43`。它是「在使用官方模型 API 时
+# 上传 Session Log」那个开关的宿主：默认 `enabled: true`，把会话日志后缀挂在请求的
+# `dsh_session_log` 字段上发出去（`packages/session/session-log-deepseek/src/index.ts:185-187`，
+# 判据只有 `enabled` 与会话是否存在，**不按 provider 区分**）。
+#
+# 关键：它在**我们的 CKJR 网关上同样生效**。该字段由 DeepSeek Messages 适配器统一注入
+# （`packages/llm/llm-deepseek/src/host.ts:36` 的 `prepareExtensions`），而
+# `dsh-ckjr-llm` 注册的 `ckjr` 路由复用的正是这个适配器（`registerDeepSeekProvider`）。
+# 也就是说：不 disable，商家每次对话都会把会话日志发给网关，而不只是发给官方 API。
+#
+# disable 这一行同时满足用户的两条要求，缺一不可：
+#
+#   * **默认关闭** —— 行不加载，就不存在任何上传路径。
+#     比 `config: {enabled: false}` 更彻底：后者只是"不发"，插件仍然活着、开关仍可被打开。
+#   * **不要显示** —— 浏览器侧那一行来自 `@deepseek-ai/dsh-client-ui-settings-session-log`，
+#     它必须靠 `ctx.configForms.whileServed(['session-log-deepseek'], …)` 才注册
+#     `settings.general.item`（`packages/client/ui-settings-session-log/src/client/index.ts:36-37`），
+#     而 settings 只把 **fiber 处于 ACTIVE** 的条目报成命名空间
+#     （`packages/settings/settings/src/index.ts:303-307`）。行被 disable 后命名空间不再被
+#     服务，那一行**根本不会被注册**。
+#
+#     这是上游支持的机制，不是遮蔽或隐藏 hack：`packages/client/ui-settings/README.md:38`
+#     写明 "A deployment that never composed the owner therefore shows no trace of the page"。
+#     对照来看，`dsh-ckjr-client-ui` 抢 `settings.models.sign-in` 座位时才是真的只能整体
+#     disable 占位者——那一条的副作用是被迫接受的，而这一条恰好正是我们想要的结果。
+#
+# 为什么不用 `config: {enabled: false}`：那样只是默认关闭，命名空间照旧被服务、
+# 设置项仍然显示，而用户要求的是"默认关闭 **并且** 不要显示"。
+#
+# 未一并处理（留给用户决定）：`session-telemetry-otel`
+# （`packages/bundle/base/cordis.patch.yml:204`）是**另一条**独立的上传路径，
+# 默认 `mode: FEEDBACK_ONLY`、默认发往 `dsh-otel-collector.deepseeksvc.com`，
+# 且它**没有**设置项。关它属于行为性变更，本次未动。
+#
+# ── 2. insert 本插件行 ───────────────────────────────────────────────────────
+#
+# `dsh-ckjr-brand/index.js` 把系统提示词第一句换成 CKJR 品牌（为什么只能这么做，
+# 那段理由写在该文件的头部注释里）。
+#
+# 本层不新增任何用户可见的设置项：本插件没有 Config，而 settings 只把有 schema 的行报成
+# 命名空间，所以它不会出现在设置页里。
+- id: session-log-deepseek
+  name: '@deepseek-ai/dsh-session-log-deepseek'
+  disabled: true
+
+- insert:
+    - id: ckjr-brand
+      name: '@ckjr/dsh-ckjr-brand'
 
 # ===== @ckjr/dsh-ckjr-client-ui  (ckjr-plugins/dsh-ckjr-client-ui) =====
 # @ckjr/dsh-ckjr-client-ui bundle patch.
