@@ -185,6 +185,35 @@ export const BRAND = {
 允许 Node 22.19，无法 import TypeScript，所以那里有一个模块内的 `const BRAND_EN = 'CKJR'`，
 注释已注明必须与 `brand.ts` 保持一致。**改品牌名请改两处。**
 
+## 欢迎/登录窗口：字标、API Key 入口、窗口标题
+
+欢迎窗口（登录窗）是与主界面**分开的一个渲染进程**：主进程用
+`loadFile(join(app.getAppPath(), 'renderer', 'welcome.html'))`（`src/welcome-window.ts`）直接加载
+`renderer/welcome.html` + `lib/welcome/welcome.js`（由 `src/client/welcome.tsx` 打包），
+文案取 Electron 外壳自己的 `src/locale.ts`，字标是 app 包里的静态资源。
+
+**它不在 DSH 的 profile / 插件图里**，所以这三处只能改 fork：插件层
+（`cordis.patch.yml` 的行 + Host/Client 插件）组装的是**登录之后**的 Harness 宿主与网页客户端；
+欢迎窗口既没有座位（slot）也没有可 patch 的行——插件注册的那些座位（`shell.overlay` 门禁、
+`sidebar.footer.action` 账号区等）全部渲染在主界面里，碰不到另一个渲染进程的 DOM 与静态资源。
+
+| 位置 | 改动 | 为什么插件层做不到 |
+|---|---|---|
+| `renderer/assets/welcome-brand.svg` | 上游字标（鲸鱼 + `deepseek` + `HARNESS` 方块）→ CKJR 字标 | 静态资源，由 `welcome.html` 里 `<img src="assets/welcome-brand.svg">` 引用，与插件系统无关。本 fork 没有 CKJR 字标的矢量原稿（安装器只有方形 `brand.png`，铺进 472×40 的宽字标位会变形），所以用**文字**渲染并自带 `@media (prefers-color-scheme: dark)` 配色——`<img>` 里的 SVG 拿不到宿主页面的 CSS 变量，必须自带 `<style>`（上游那把字标也是这么做的） |
+| `src/client/WelcomePage.tsx` | 删掉 entry 页的 `#api-key` 与登录失败页的 `#auth-api-key` 两个按钮（key 页因此不可达） | 这两个按钮是欢迎窗口自己的 JSX；patch 层的三种操作（disable / 覆盖 config / insert）只能作用于行，删不掉另一个渲染进程 JSX 里的一行 |
+| `src/locale.ts` | `welcomeTitle` 改用 `BRAND.menu`（原 `BRAND.en` / `BRAND.zh`） | 窗口标题由 `welcome-window.ts` 的 `BrowserWindow.title` 与 `WelcomePage` 的 `document.title` 从外壳字典取；插件层没有改写它的接缝。Windows 隐藏标题栏后，这个字符串就是**任务栏悬停预览与 Alt-Tab 里显示的文字**，按命名规范必须是 `CKJR Harness` |
+| `src/locale.ts` | `aboutProduct`、`welcomeBrand` 改用 `BRAND.menu` | 同一条：About 面板的产品名与字标的 `alt` 都由外壳字典提供，属于「完整产品名」位置 |
+
+**刻意保留**（属"公司名/品牌"而不是"产品名"位置，按 `brand.ts` 的口径继续用 `BRAND.zh`）：
+`welcomeTaglineBrand`（欢迎语「欢迎使用创客匠人」）、`aboutMenu`、`hideApplication`、`quitTitle`、
+`startupFailed`、`updateTitle`。要改成 `CKJR Harness` 是产品口径变更，不是修 bug。
+
+**上游同步注意**：`welcome-brand.svg` 是 fork 独有内容（上游会改回鲸鱼字标）；
+`WelcomePage.tsx` 的 `entry-actions` 与 `auth-actions` 两处按钮列表、
+`locale.ts` 的四个键是冲突热点。改文案后要同步
+`apps/desktop/tests/expected/welcome/*.expected.txt`（其中 6 个文件第一行是
+`document.title`，即 `welcomeTitle`）。
+
 ## 改了哪些东西（78 文件，+279/−365）
 
 | 类别 | 内容 |

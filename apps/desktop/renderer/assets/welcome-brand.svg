@@ -35,10 +35,14 @@
   }
 </style>
 
-<!-- 主体：CKJR -->
-<text class="ckjr-wordmark" x="2" y="30" fill="var(--ckjr-wordmark)">CKJR</text>
+<!-- 内容整体右移 113px 居中：上游那把字标的内容中心在 x≈235.5，画布 472 宽；
+     而 .brand 是 width:100%（welcome.css），不做这一步字标会显得贴左。 -->
+<g transform="translate(113 0)">
+  <!-- 主体：CKJR -->
+  <text class="ckjr-wordmark" x="2" y="30" fill="var(--ckjr-wordmark)">CKJR</text>
 
-<!-- 后缀：反白 HARNESS 方块（与侧边栏品牌位、安装器 brand.png 同构） -->
-<rect x="107" y="10" width="137" height="25" rx="4" fill="var(--ckjr-badge-bg)"/>
-<text class="ckjr-badge" x="116" y="28" fill="var(--ckjr-badge-fg)">HARNESS</text>
+  <!-- 后缀：反白 HARNESS 方块（与侧边栏品牌位、安装器 brand.png 同构） -->
+  <rect x="107" y="10" width="137" height="25" rx="4" fill="var(--ckjr-badge-bg)"/>
+  <text class="ckjr-badge" x="116" y="28" fill="var(--ckjr-badge-fg)">HARNESS</text>
+</g>
 </svg>

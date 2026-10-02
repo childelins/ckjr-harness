@@ -1,4 +1,4 @@
-CKJR
+CKJR Harness
 CKJR Harness
 Browser didn’t open automatically?
 Copy sign-in link

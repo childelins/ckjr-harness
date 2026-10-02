@@ -68,7 +68,11 @@ export const en = {
   restartApplication: 'Restart',
   recoveryOperationFailed: 'The recovery operation failed',
   disableThirdPartyPlugins: 'Disable third-party plugins, back up profile patch, and restart',
-  welcomeTitle: BRAND.en,
+  // 窗口标题属于「完整产品名」位置：Windows 隐藏标题栏后，这个字符串就是任务栏
+  // 悬停预览与 Alt-Tab 里显示的文字（welcome-window.ts 的 BrowserWindow.title 与
+  // WelcomePage 的 document.title 都取它）。按命名规范与托盘菜单、DSH_CLIENT_TITLE
+  // 保持一致，用 BRAND.menu 而不是 BRAND.en。
+  welcomeTitle: BRAND.menu,
   welcomeBrand: BRAND.menu,
   welcomeTaglineBefore: 'Welcome to ',
   welcomeTaglineBrand: BRAND.en,
@@ -239,7 +243,9 @@ export const zh = {
   restartApplication: '重启',
   recoveryOperationFailed: '恢复操作失败',
   disableThirdPartyPlugins: '禁用第三方插件、备份 profile patch 并重启',
-  welcomeTitle: BRAND.zh,
+  // 同 en：窗口标题用完整产品名。原值是 BRAND.zh「创客匠人」，于是任务栏悬停预览
+  // 里露出的公司名而不是产品名（用户可见的产品名一律 CKJR Harness）。
+  welcomeTitle: BRAND.menu,
   welcomeBrand: BRAND.menu,
   welcomeTaglineBefore: '欢迎使用',
   welcomeTaglineBrand: BRAND.zh,
