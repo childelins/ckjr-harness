@@ -99,6 +99,14 @@
   name: '@deepseek-ai/dsh-session-log-deepseek'
   disabled: true
 
+# 另一条独立上传路径：OpenTelemetry 遥测（默认 mode: FEEDBACK_ONLY，
+# 默认发往 dsh-otel-collector.deepseeksvc.com，**没有设置项**，用户关不了）。
+# 出处 packages/bundle/base/cordis.patch.yml:204；上游有测试断言该行可被 disabled
+# （apps/cli/tests/resolved-profile-boot.spec.ts:165），故这是受支持的开关方式。
+- id: session-telemetry-otel
+  name: '@deepseek-ai/dsh-session-telemetry-otel'
+  disabled: true
+
 - insert:
     - id: ckjr-brand
       name: '@ckjr/dsh-ckjr-brand'
