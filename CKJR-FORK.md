@@ -364,3 +364,54 @@ git rebase upstream/master
       它们是上游项目文档，本次未动。
 - [ ] `.env.*.example` 里 `DSH_DESKTOP_APP_ID=com.ckjr.harness.desktop` 是示例值，
       正式发布前请确认（**刻意不同于** `com.ckjr.agent.desktop`，两者是不同产品）。
+
+## 交互界面一句里的产品名（`app:web-surface`）
+
+**现象**：桌面端新会话里，代理会告诉用户「你是在 DeepSeek Harness Web GUI（`http://127.0.0.1:19487`）里跟我对话」。
+
+**出处**：`packages/bundle/web-app/src/index.ts:139`
+
+```ts
+return `You are interacting with the user through the DeepSeek Harness Web GUI at ${webUrl}. `
+```
+
+注册处同文件 `:236-240`（section 名 `app:web-surface`、order = `WEB_SURFACE` = 10100，仅在 `config.surfaceContext` 时注册）。
+桌面端本身就是 web-app bundle + 本地 web 服务（`apps/desktop-host/src/index.ts:26` 的 `DEFAULT_WEB_PORT = '19487'`），
+所以这句在桌面端会话里同样出现。
+
+**落点：插件层** ✓（`@ckjr/dsh-ckjr-brand`，沿用它与身份句同一个 `system-prompt/assemble` waterfall）。
+在 assembly 里找到 `app:web-surface`，把文本里的 `DeepSeek Harness` 换成 `CKJR Harness`：
+**只改产品名** —— URL 是对的、后面讲 HMR/重建/web 资产那句属实现细节，都原样保留。
+
+两个实现细节：
+- `PromptAssembly` 的 JSDoc 说 sections "remain uninterpolated until rendered"，
+  所以 `section.text` **可能是字符串、也可能仍是注册时那个函数**
+  （上游注册的就是 `text: () => webSurfacePrompt(localWebUrl(promptCtx))`）。两种都要处理，
+  求值上游函数要包 try/catch —— 品牌没生效不该让整个会话起不来。
+- `replaceAll` 对已替换过的文本是恒等操作，因此天然幂等（同一 assembly 会被反复组装）。
+
+**为什么只能靠 waterfall、不能改那节本身**：与身份句同因 —— `app:web-surface` 由 `dsh-web-app`
+在自己作用域里注册，本插件是全局插件，进不了那个作用域；能改到最终渲染内容的只有
+`system-prompt/assemble`（其 JSDoc 写明 "The returned value is authoritative"）。
+
+### `DSH_WEB_URL` 的环境变量描述：**插件层做不到**（已查实，未改 fork）
+
+同一处 `packages/bundle/web-app/src/index.ts:246` 还有一条同样带品牌名的字符串：
+
+```ts
+[DSH_WEB_URL]: { description: 'Canonical local URL of the DeepSeek Harness Web GUI serving this session.' }
+```
+
+它经 `shellEnv.register()` 注册，**插件层无法改写**。证据（`packages/shell/shell-env/src/index.ts`）：
+
+| 行 | 内容 | 含义 |
+|---|---|---|
+| `:114` | `register(contributor: BashEnvContributor): () => void` | 注册表**只有注册**这一个入口 |
+| `:120` | `throw new Error(\`bash env contributor "${name}" is already registered\`)` | 同名**重注册直接抛错**，顶不掉 |
+| `:41-43` | `interface BashEnvVariable { description: string }` | `description` **只在注册时**能写 |
+| 导出面 | `name / inject / Config / BashEnvVariable / BashEnvContributor / BashEnvVariableInfo / ShellEnvRegistry / apply` | **没有任何修改 API，也没有 hook/waterfall** |
+
+而且那条 `register()` 返回的 disposer 由 `dsh-web-app` 自己持有，插件拿不到。
+**因此本项未处理**：改它必须动 fork，且只为一个字符串 —— 而它**是否真的进入模型可见的提示词尚未证实**
+（实测中模型看到的是 `Managed $env:DSH_* variables expose current harness environment facts.` 这类概括句，
+不是逐条描述）。等有证据表明它会露出来，再按最小改动处理。
