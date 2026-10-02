@@ -200,18 +200,40 @@ jobs:
           if pnpm install --frozen-lockfile; then
             echo "::notice::pnpm install --frozen-lockfile 成功，依赖由 lockfile 固定。"
           else
-            echo "::warning::--frozen-lockfile 失败（通常是 ckjr-plugins 已接入 pnpm 工作区但 pnpm-lock.yaml 未同步，报 ERR_PNPM_OUTDATED_LOCKFILE）。改用 --no-frozen-lockfile 继续：产物仍会包含 CKJR 插件，但本次依赖解析不再由 lockfile 固定。修好 lockfile 后请恢复固定安装。"
+            echo "::warning::pnpm install --frozen-lockfile 失败（常见原因是 pnpm-lock.yaml 与 package.json / pnpm-workspace.yaml 不同步，报 ERR_PNPM_OUTDATED_LOCKFILE）。改用 --no-frozen-lockfile 继续：本次依赖解析不再由 lockfile 固定，浮动依赖可能漂移，产物内容以本次解析结果为准。修好 lockfile 后请恢复固定安装。"
             pnpm install --no-frozen-lockfile
           fi
 
-      - name: Check the plugin workspace wiring
+      # 插件**刻意不是** pnpm 工作区成员，别把它改回去：根 pnpm-workspace.yaml 的 packages
+      # 上方解释了原因——把 ckjr-plugins/* 列进去会给 pnpm-lock.yaml 引入 importer，pnpm
+      # 随之自动安装这些普通 peer 版本范围，锁文件必须全量重解析，浮动的传递依赖
+      # （实测 micromark-util-types 2.0.2 → 2.0.3）会让
+      # packages/client/ui-primitives/src/markdown/parse.ts 因类型身份冲突编译失败。
+      # 工作区成员资格也从来不是「插件会不会进包」的判据：package-target.ts 按**目录**
+      # pnpm pack，prepare-package-set.ts 按**打包产物**的 @ckjr/ 前缀推导闭包根。
+      # 所以这里只检查检出内容本身。
+      - name: Check the CKJR plugin checkout
         run: |
-          if grep -qs 'ckjr-plugins' pnpm-workspace.yaml || grep -qs 'ckjr-plugins' package.json; then
-            echo "::notice::ckjr-plugins 已接入 pnpm 工作区。"
-          else
-            echo "::error::ckjr-plugins 未接入 pnpm 工作区（pnpm-workspace.yaml 的 packages 与 package.json 的 workspaces 都没有匹配项）。此时构建仍会成功，但安装包里不会有任何 CKJR 插件——静默产出错误产物比失败更糟，因此在此终止。请先合入 feature/ckjr-bundled-plugins 的工作区改动。"
+          set -eo pipefail
+          if [ ! -d "$CKJR_PLUGINS_PATH" ]; then
+            echo "::error::$CKJR_PLUGINS_PATH 不存在：插件仓库没有检出，安装包里不会有任何 @ckjr/* 包。检查上一步 'Check out the CKJR plugin packages' 是否成功。"
             exit 1
           fi
+          # 与 package-target.ts 的 ckjrPackageDirectories() 同口径：只扫第一层，含
+          # cordis.patch.yml 的目录才算插件（该文件是 generate-ckjr-bundle-patch.ts 的合并输入）。
+          plugin_count=0
+          plugin_dirs=''
+          for dir in "$CKJR_PLUGINS_PATH"/*/; do
+            if [ -f "${dir}cordis.patch.yml" ]; then
+              plugin_count=$((plugin_count + 1))
+              plugin_dirs="$plugin_dirs ${dir%/}"
+            fi
+          done
+          if [ "$plugin_count" -eq 0 ]; then
+            echo "::error::$CKJR_PLUGINS_PATH 下没有任何含 cordis.patch.yml 的插件目录（要求至少 1 个）。这样产出的安装包会缺掉 CKJR 登录与计费插件，因此在此终止——静默产出错误产物比失败更糟。逐项排查：① 插件仓库 $CKJR_PLUGINS_REPOSITORY 是否可读：它要么是公开仓库且仓库变量 CKJR_PLUGINS_PUBLIC=true，要么必须配置 secrets.CKJR_PLUGINS_TOKEN；② 检出的是否是插件所在的默认分支 main；③ 插件是否被挪进了子目录——package-target.ts 只扫 $CKJR_PLUGINS_PATH 的第一层。"
+            exit 1
+          fi
+          echo "::notice::$CKJR_PLUGINS_PATH 下有 $plugin_count 个含 cordis.patch.yml 的插件目录：$plugin_dirs"
 
       # 打包脚本只从 apps/desktop/.env.windows 读取发布字段：环境变量里的同名值会被
       # 过滤掉（desktop-package-environment.mjs:19,57），所以 CI 必须生成该文件。
@@ -419,6 +441,88 @@ jobs:
             pnpm run "$script"
           fi
 
+      # 上面的目录检查只能证明「检出里有插件」，这一步才证明「插件真的进了安装包」——
+      # 两条都过了才排掉"静默产出缺插件的安装包"这条路径。只解析 app.asar 的头部 JSON
+      # （不解包，百来 MB 的包也是毫秒级），不额外下载任何东西，也不引入新机密。
+      - name: Verify the packaged app ships every CKJR plugin
+        run: |
+          set -eo pipefail
+          if [ "${CKJR_UNSIGNED}" = 'true' ]; then
+            target_dir="$CKJR_TARGET_DIR/unsigned-artifacts"
+          else
+            target_dir="$CKJR_TARGET_DIR/artifacts"
+          fi
+          # electron-builder 的 directories.output 就是这里（electron-builder-config.mjs:120）。
+          # 万一将来布局变了，退回到在该目录下找任意 app.asar，免得把整条流水线卡在最后一步。
+          app_asar="$target_dir/win-unpacked/resources/app.asar"
+          if [ ! -f "$app_asar" ]; then
+            app_asar=$(find "$target_dir" -name app.asar -type f 2>/dev/null | head -n 1 || true)
+          fi
+          if [ -z "$app_asar" ] || [ ! -f "$app_asar" ]; then
+            echo "::error::在 $target_dir 下找不到 app.asar，无法确认安装包内含 CKJR 插件。"
+            exit 1
+          fi
+          echo "核对 $app_asar"
+          ASAR_PATH="$app_asar" node --input-type=module <<'NODE'
+            import { readFileSync, readdirSync, existsSync } from 'node:fs'
+            import { join } from 'node:path'
+
+            // 期望清单 = 检出里每个插件包的 name + fork 自带的 bundle（packages/bundle/ckjr）。
+            const scope = '@ckjr/'
+            const pluginsRoot = process.env.CKJR_PLUGINS_PATH
+            const expected = []
+            for (const entry of readdirSync(pluginsRoot, { withFileTypes: true })) {
+              if (!entry.isDirectory()) continue
+              if (!existsSync(join(pluginsRoot, entry.name, 'cordis.patch.yml'))) continue
+              expected.push(JSON.parse(readFileSync(join(pluginsRoot, entry.name, 'package.json'), 'utf8')).name)
+            }
+            expected.push(JSON.parse(readFileSync('packages/bundle/ckjr/package.json', 'utf8')).name)
+
+            // ASAR 文件树里的键是**单段目录名**，作用域名与包名各占一层，所以按叶子名比对。
+            const expectedLeaves = new Map()
+            for (const name of expected) {
+              if (!name.startsWith(scope)) {
+                console.error(`::error::插件包名不在 ${scope} 作用域下：${name}。prepare-package-set.ts 按该前缀推导闭包根，非该前缀的插件不会被识别成闭包根。`)
+                process.exit(1)
+              }
+              expectedLeaves.set(name.slice(scope.length), name)
+            }
+
+            // ASAR 头部是 pickle 套 pickle：偏移 12 是头部 JSON 的字节长度，偏移 16 起是 JSON 本身。
+            // 按文件树里的目录名查找，比在整包二进制里搜 "@ckjr" 可靠——生成的 cordis.patch.yml
+            // 内容里也含 @ckjr/* 字样，整包 grep 会假通过。
+            const bytes = readFileSync(process.env.ASAR_PATH)
+            const header = JSON.parse(bytes.toString('utf8', 16, 16 + bytes.readUInt32LE(12)))
+
+            const scopesNamed = (node, name, found = []) => {
+              if (node === null || typeof node !== 'object' || node.files === undefined) return found
+              for (const [key, child] of Object.entries(node.files)) {
+                if (key === name && child !== null && typeof child === 'object' && child.files !== undefined) found.push(child)
+                scopesNamed(child, name, found)
+              }
+              return found
+            }
+
+            const shipped = new Set()
+            for (const scopeNode of scopesNamed(header, scope.slice(0, -1))) {
+              for (const [name, child] of Object.entries(scopeNode.files)) {
+                if (child !== null && typeof child === 'object' && child.files?.['package.json'] !== undefined) shipped.add(name)
+              }
+            }
+
+            const shippedList = [...shipped].sort().join(', ')
+            const missing = [...expectedLeaves].filter(([leaf]) => !shipped.has(leaf)).map(([, full]) => full)
+            if (missing.length > 0) {
+              console.error(`::error::安装包的 app.asar 缺少 CKJR 插件：${missing.join(', ')}；实际打进去的 @ckjr 包：${shippedList || '<无>'}。安装包会缺掉商家登录与计费所需的插件，因此在此终止而不是上传错误产物。`)
+              process.exit(1)
+            }
+            const extra = [...shipped].filter(leaf => !expectedLeaves.has(leaf)).sort()
+            if (extra.length > 0) {
+              console.log(`::warning::app.asar 里的 @ckjr 包多于检出：${extra.join(', ')}（可能是检出中途变化或打包缓存陈旧，不影响本产物的可用性）`)
+            }
+            console.log(`::notice::app.asar 内确认有 ${shipped.size} 个 @ckjr 包：${shippedList}`)
+          NODE
+
       - name: Stage installers
         run: |
           set -eo pipefail
@@ -600,18 +704,33 @@ jobs:
           if pnpm install --frozen-lockfile; then
             echo "::notice::pnpm install --frozen-lockfile 成功，依赖由 lockfile 固定。"
           else
-            echo "::warning::--frozen-lockfile 失败（通常是 ckjr-plugins 已接入 pnpm 工作区但 pnpm-lock.yaml 未同步，报 ERR_PNPM_OUTDATED_LOCKFILE）。改用 --no-frozen-lockfile 继续：产物仍会包含 CKJR 插件，但本次依赖解析不再由 lockfile 固定。"
+            echo "::warning::pnpm install --frozen-lockfile 失败（常见原因是 pnpm-lock.yaml 与 package.json / pnpm-workspace.yaml 不同步，报 ERR_PNPM_OUTDATED_LOCKFILE）。改用 --no-frozen-lockfile 继续：本次依赖解析不再由 lockfile 固定，浮动依赖可能漂移，产物内容以本次解析结果为准。修好 lockfile 后请恢复固定安装。"
             pnpm install --no-frozen-lockfile
           fi
 
-      - name: Check the plugin workspace wiring
+      # 与 windows 作业保持一致的插件检出检查（判据见那里的注释：插件刻意不是工作区成员）。
+      - name: Check the CKJR plugin checkout
         run: |
-          if grep -qs 'ckjr-plugins' pnpm-workspace.yaml || grep -qs 'ckjr-plugins' package.json; then
-            echo "::notice::ckjr-plugins 已接入 pnpm 工作区。"
-          else
-            echo "::error::ckjr-plugins 未接入 pnpm 工作区（pnpm-workspace.yaml 的 packages 与 package.json 的 workspaces 都没有匹配项）。构建仍会成功但安装包里没有 CKJR 插件，因此在此终止。请先合入 feature/ckjr-bundled-plugins 的工作区改动。"
+          set -eo pipefail
+          if [ ! -d "$CKJR_PLUGINS_PATH" ]; then
+            echo "::error::$CKJR_PLUGINS_PATH 不存在：插件仓库没有检出，安装包里不会有任何 @ckjr/* 包。检查上一步 'Check out the CKJR plugin packages' 是否成功。"
             exit 1
           fi
+          # 与 package-target.ts 的 ckjrPackageDirectories() 同口径：只扫第一层，含
+          # cordis.patch.yml 的目录才算插件（该文件是 generate-ckjr-bundle-patch.ts 的合并输入）。
+          plugin_count=0
+          plugin_dirs=''
+          for dir in "$CKJR_PLUGINS_PATH"/*/; do
+            if [ -f "${dir}cordis.patch.yml" ]; then
+              plugin_count=$((plugin_count + 1))
+              plugin_dirs="$plugin_dirs ${dir%/}"
+            fi
+          done
+          if [ "$plugin_count" -eq 0 ]; then
+            echo "::error::$CKJR_PLUGINS_PATH 下没有任何含 cordis.patch.yml 的插件目录（要求至少 1 个）。这样产出的安装包会缺掉 CKJR 登录与计费插件，因此在此终止——静默产出错误产物比失败更糟。逐项排查：① 插件仓库 $CKJR_PLUGINS_REPOSITORY 是否可读：它要么是公开仓库且仓库变量 CKJR_PLUGINS_PUBLIC=true，要么必须配置 secrets.CKJR_PLUGINS_TOKEN；② 检出的是否是插件所在的默认分支 main；③ 插件是否被挪进了子目录——package-target.ts 只扫 $CKJR_PLUGINS_PATH 的第一层。"
+            exit 1
+          fi
+          echo "::notice::$CKJR_PLUGINS_PATH 下有 $plugin_count 个含 cordis.patch.yml 的插件目录：$plugin_dirs"
 
       # macOS 没有未签名路径：这里强制要求签名与公证凭据，缺任何一项立即失败。
       - name: Validate release settings and write apps/desktop/.env.macos
