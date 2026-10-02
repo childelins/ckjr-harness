@@ -41,7 +41,7 @@ import type { en } from './locales.ts'
 import styles from './ModelsSection.module.css'
 
 /** Per-adapter-family curated field sets (unknown namespaces get the hint alone). */
-type EditorLayout = 'deepseek' | 'pi-ai' | 'unknown'
+export type EditorLayout = 'deepseek' | 'pi-ai' | 'unknown'
 
 
 
@@ -144,6 +144,36 @@ function layoutOf(ns: string): EditorLayout {
   return 'unknown'
 }
 
+/**
+ * The layout one provider edits in. The route id answers before the namespace
+ * does: account settings use a configurable Cordis entry id, so the account
+ * route edits in the DeepSeek layout whatever namespace holds its section.
+ * Every caller must ask with the route id and not the namespace alone, or the
+ * account card falls into the namespace-less `unknown` layout instead.
+ * @param provider - provider route id.
+ * @param ns - the settings namespace holding this provider's profile.
+ * @returns the layout the provider's card renders in.
+ */
+export function providerLayout(provider: string, ns: string): EditorLayout {
+  return provider === 'deepseek-account' ? 'deepseek' : layoutOf(ns)
+}
+
+/**
+ * Whether a provider has any curated field this page could edit. An `unknown`
+ * layout renders the `cordis.patch.yml` hint alone with its commit action
+ * disabled (see {@link ProviderEditor}), so an Edit action for one could only
+ * open a card that stores nothing — a row showing such a provider presents it
+ * through the provider-card seat instead. This is what keeps a third-party
+ * provider's card from carrying upstream's placeholder editor beside whatever
+ * the seat contributes.
+ * @param provider - provider route id.
+ * @param ns - the settings namespace holding this provider's profile.
+ * @returns whether the provider's card carries editable fields.
+ */
+export function hasCuratedFields(provider: string, ns: string): boolean {
+  return providerLayout(provider, ns) !== 'unknown'
+}
+
 /** The credential reference this profile resolves keys through. */
 function refFor(
   schema: SettingsSchemaOperations,
@@ -185,8 +215,9 @@ export function ProviderEditor(props: ProviderEditorProps): ReactNode {
   const fallback = schema.getPath(namespace.value, settingsPath)
   const disabled = props.readOnly || busy
   const accountProvider = props.provider === 'deepseek-account'
-  // Account settings use a configurable Cordis entry id.
-  const layout = accountProvider ? 'deepseek' : layoutOf(namespace.ns)
+  // Account settings use a configurable Cordis entry id, which the route id —
+  // not the namespace — is what recognizes.
+  const layout = providerLayout(props.provider, namespace.ns)
   const keyRef = refFor(schema, namespace, settingsPath, props.provider)
   // The same schema read the create card makes, so the choices offered here
   // and there cannot drift apart: both come from the adapter's own `Config`.

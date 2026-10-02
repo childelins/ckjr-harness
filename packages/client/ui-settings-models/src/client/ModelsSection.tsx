@@ -33,7 +33,7 @@ import { deriveKeyRef, protocolChoices, providerUsable } from './store.ts'
 import type { ModelsSettingsStore, ProviderRow } from './store.ts'
 import type { ModelsOperations } from './operations.ts'
 import type { SettingsSchemaOperations } from './schema-operations.ts'
-import { ProviderEditor, type ProviderEditorProps } from './ProviderEditor.tsx'
+import { hasCuratedFields, ProviderEditor, type ProviderEditorProps } from './ProviderEditor.tsx'
 import type { en } from './locales.ts'
 import styles from './ModelsSection.module.css'
 
@@ -400,10 +400,18 @@ function Loaded({ injected, renderSlot }: { injected: ModelsSectionFace; renderS
           const namespace = state.namespaces.get(target.settingsNs)
           /* v8 ignore next -- the join marks a row configured only when its namespace resolved */
           if (namespace === undefined) return null
+          // A provider whose namespace ships no curated field set has nothing
+          // this page can edit: its card would be the `cordis.patch.yml` hint
+          // with a disabled commit action. Such a row offers neither the Edit
+          // action nor the editor behind it — whatever the provider-card seat
+          // contributes IS its presence on the page — and it also skips the
+          // first-run setup posture, which would otherwise open that same
+          // empty card as the row's whole body.
+          const editable = hasCuratedFields(target.provider, target.settingsNs)
           const error = row.entry.error === undefined
             ? null
             : <p role="alert" className={styles['error']}>{row.entry.error}</p>
-          if (needsSetup(row, anyUsable) && !dismissedSetup.has(row.entry.provider)) {
+          if (editable && needsSetup(row, anyUsable) && !dismissedSetup.has(row.entry.provider)) {
             // First-run posture: the provider exists but has no key — the
             // setup card IS its presence on the page, until the user closes it.
             return (
@@ -426,7 +434,9 @@ function Loaded({ injected, renderSlot }: { injected: ModelsSectionFace; renderS
               </li>
             )
           }
-          const open = !addOpen && editing?.provider === row.entry.provider
+          // Only an editable provider can be open: a target left in `editing`
+          // by a refresh must not resurrect the placeholder card.
+          const open = editable && !addOpen && editing?.provider === row.entry.provider
           const credentialConfigured = row.credential?.configured === true
           const credentialMissing = !credentialConfigured
             && row.apiKeyEnv !== undefined
@@ -463,21 +473,25 @@ function Loaded({ injected, renderSlot }: { injected: ModelsSectionFace; renderS
                       : null}
                 </span>
                 <span className={styles['rowActions']}>
-                  <button
-                    type="button"
-                    className={styles['secondaryButton']}
-                    aria-label={providerCopy(t('editProvider'), target)}
-                    onClick={() => {
-                      setSavedTarget(undefined)
-                      // One card at a time: the add card closes with whatever
-                      // it held, since closing either card would otherwise
-                      // discard the other's draft.
-                      setAddOpen(false)
-                      setEditing(open ? undefined : target)
-                    }}
-                  >
-                    {t('edit')}
-                  </button>
+                  {editable
+                    ? (
+                      <button
+                        type="button"
+                        className={styles['secondaryButton']}
+                        aria-label={providerCopy(t('editProvider'), target)}
+                        onClick={() => {
+                          setSavedTarget(undefined)
+                          // One card at a time: the add card closes with whatever
+                          // it held, since closing either card would otherwise
+                          // discard the other's draft.
+                          setAddOpen(false)
+                          setEditing(open ? undefined : target)
+                        }}
+                      >
+                        {t('edit')}
+                      </button>
+                    )
+                    : null}
                   {row.removable
                     ? (
                       <button

@@ -76,6 +76,52 @@ pnpm --filter @deepseek-ai/dsh-desktop run generate:ckjr-bundle-patch
 pnpm --filter @deepseek-ai/dsh-desktop run generate:ckjr-bundle-patch -- --check
 ```
 
+### 出厂品牌与隐私默认：`dsh-ckjr-brand`
+
+第四个出厂插件，**不参与登录链路**（去掉它登录照样能跑），只做两件"上游有开关、但不该让
+商家用户自己去关"的事。两条都**只在插件层**（dsh-plugins + 生成出来的补丁层）实现，
+**没有改 fork 的任何一行上游代码**。
+
+| 改动 | 用户可见效果 | 为什么插件层能表达 / 为什么别的做法不行 |
+|---|---|---|
+| 系统提示词第一句 `You are an AI agent powered by DeepSeek Harness.` → `You are an AI agent powered by CKJR Harness.` | 新会话的身份句是 CKJR 品牌 | 上游那句是**写死的字面量**（`packages/core/system-prompt/src/index.ts:429`），句子里没有产品名插值；`DSH_CLIENT_TITLE` 只喂浏览器 `<title>`（`apps/web/vite.config.ts:23`），与提示词不在一条链上。**"关掉 `includeHarnessIdentity` + 把品牌句写进 `personaPrefix`"这条路不可行**：`personaPrefix` 座位会被 agent preset 遮蔽（`packages/bundle/web-app/presets/standard.patch.yml:11-15` 在每个 preset 的 agent scope 里挂 `dsh-persona`），而 Web 新会话正是走 preset。插件能用的接缝是 `system-prompt/assemble` waterfall，上游产品插件本来就在用它（如 `packages/context/session-reference/src/index.ts:127`）。 |
+| 出厂 `session-log-deepseek` 行 `disabled: true` | Session Log **默认关闭**，且设置 → 通用设置里**不再显示**那一项 | disable 一行同时满足两条：行不加载就不存在上传路径；浏览器侧那一行必须靠 `ctx.configForms.whileServed(['session-log-deepseek'], …)` 才注册（`packages/client/ui-settings-session-log/src/client/index.ts:36-37`），而行被 disable 后命名空间不再被服务（`packages/settings/settings/src/index.ts:303-307` 只报 fiber 处于 `ACTIVE` 的条目）。这是**上游支持的机制**，不是遮蔽 hack：`packages/client/ui-settings/README.md:38` 写明 "A deployment that never composed the owner therefore shows no trace of the page"，上游自己的 `packages/client/ui-settings-session-log/tests/apply.client.spec.ts:12-53` 就断言"命名空间不被服务时那一行不存在"。 |
+
+顺带一条**已核实的事实**（不是猜测）：不 disable 时，会话日志**也会发给 CKJR 网关**，
+而不只是发给官方 API——`dsh_session_log` 字段由 DeepSeek Messages 适配器统一注入
+（`packages/llm/llm-deepseek/src/host.ts:36` 的 `prepareExtensions`），而 `dsh-ckjr-llm`
+注册的 `ckjr` 路由复用的正是这个适配器（`registerDeepSeekProvider`），且该扩展的判据里
+没有 provider 过滤。
+
+**刻意没做**：`session-telemetry-otel`（`packages/bundle/base/cordis.patch.yml:204`）是**另一条**
+独立上传路径，默认 `FEEDBACK_ONLY`、默认发往 `dsh-otel-collector.deepseeksvc.com`，而且它
+**没有设置项**。关它属于行为性变更，等明确要求再动。
+
+**验证**：`node dsh-ckjr-brand/verify-brand-prompt.mjs`——16 项断言，跑的是 fork **已编译的**
+`SystemPrompt` 与 Loader **真正的** `applyEntryPatches`，含"preset 确实遮蔽 personaPrefix"的
+反证。未验证项见该插件 README。
+
+> ⚠️ **新增插件后必须重新生成** `packages/bundle/ckjr/cordis.patch.yml`：
+>
+> ```bash
+> DSH_CKJR_PLUGINS_ROOT=<dsh-plugins 检出> pnpm --filter @deepseek-ai/dsh-desktop run generate:ckjr-bundle-patch
+> ```
+>
+> 它是生成物，但**也要提交**（否则 `--check` 与 CI 判定不一致）。打包流程会在 `pnpm pack`
+> 之前自动重算，所以漏了不会产出错包，只会让检出的生成物过期。
+
+> 🔴 **上游同步时最容易被抹掉的两行**：`packages/bundle/ckjr/cordis.patch.yml` 是 fork 独有文件，
+> 上游不会碰它；但如果**从一个不含 `dsh-ckjr-brand` 的插件检出**重新生成，`session-log-deepseek`
+> 的 `disabled: true` 与 `ckjr-brand` 的 insert 行会**静默消失**（生成器只扫目录，不读清单）。
+> 发现生成物里少了这两行时，先确认 `DSH_CKJR_PLUGINS_ROOT` 指向的检出里有 `dsh-ckjr-brand/`，
+> 再重跑上面那条命令——**不要**去改 fork 的上游文件。
+
+另附一条已验证的**结论**，避免以后白忙：这两项改动**不需要动任何 fork 测试快照**。
+`apps/web/tests/scaffold.ts:755` 给自己搭的 profile 只有 `dsh-base` + `dsh-web-app`
+（`@ckjr/dsh-bundle-ckjr` 不在里面），所以 `apps/web/tests/replay-round-trip.e2e.ts:224`
+那句 DeepSeek 文案断言、`apps/web/tests/session-log-upload.e2e.ts` 与
+`apps/web/tests/expected/settings-chrome/*.expected.md` 里的那一行**都照旧通过**。
+
 ### 限制与已知待办
 
 - **`packages/test-support/client-runtime/src/assembly/bundle-roster.ts` 里的
@@ -168,6 +214,62 @@ production: { originEnvName: 'DOWNLOAD_PROD_ORIGIN', fixedOrigin: undefined, …
 - 永远不会回落到官方源。
 - 上传仍走 `DOWNLOAD_{TEST,PROD}_COS_*`（腾讯 COS），bucket 与 `dsh-desk/` 前缀未动。
 
+## 设置 → 模型：没有 curated 字段的 provider 不再有「编辑」与占位编辑器
+
+**现象**：设置 → 模型的「创客匠人」卡片上，除了我方 `dsh-ckjr-client-ui` 通过
+`settings.models.provider-card` 座位渲染的卡片（可用模型 + 刷新），还挂着上游那一块：
+右上角「编辑」按钮，以及点开后只有一句
+`其余字段在 cordis.patch.yml 中，请直接编辑对应段。（ckjr-llm）` 加 [取消][保存] 的占位编辑器
+（「保存」本来就是灰的）。
+
+### 为什么插件做不到，必须改 fork
+
+1. **`settings.models.provider-card` 是插入式座位，不是替换式。**
+   `packages/client/ui-settings-models/src/client/ModelsSection.tsx` 里
+   `renderSlot('settings.models.provider-card', …)` 插在卡片头与编辑器**之间**；
+   slot 机制只带一个 `fallback`（没有贡献者时渲染什么），**没有"有贡献者就不渲染上游卡"的能力**。
+   所以插件只能往卡片里**加**东西，压不掉上游卡的任何一部分。
+2. **「编辑」按钮无条件渲染。** 同一文件里只有「删除」受 `row.removable` 控制，
+   「编辑」没有任何开关；patch 层的三种操作（`disabled` / 覆盖 `config` / `insert`）
+   也删不掉上游 JSX 里的一行。
+3. 于是这属于《CKJR-架构决策-改哪里.md》第三节那类"插件够不着"的改动：**只能改上游源码**。
+
+### 改法（通用规则，不硬编码 ckjr-llm）
+
+**布局为 `unknown` 的 provider：不显示「编辑」按钮，也不渲染编辑器。**
+`ProviderEditor.tsx` 的 `layoutOf(ns)` 只认 `llm-deepseek` 与 `llm-pi-ai`，
+其余（包括我们的 `ckjr-llm`）都是 `unknown` → 卡片正文只剩那句 `cordis.patch.yml` 提示，
+且 `submitDisabled` 里的 `layout === 'unknown'` 让「保存」永远点不亮。
+即 **`unknown` = 这张卡没有任何可编辑字段**，给它一个"点了也存不了"的编辑按钮本来就是上游的小瑕疵；
+改成不显示，对上游也说得通（规则里没有 ckjr 字样）。
+
+- `ProviderEditor.tsx`：新增导出的 `providerLayout(provider, ns)` 与
+  `hasCuratedFields(provider, ns)`，把组件里原来那句 `accountProvider ? 'deepseek' : layoutOf(ns)`
+  收敛成**唯一一处判断**，避免两处各写一份而漂移。
+- `ModelsSection.tsx`：行渲染处用 `hasCuratedFields(target.provider, target.settingsNs)`
+  决定是否渲染「编辑」按钮、该行是否允许展开编辑器（`editing` 里残留的目标也不会再复活那张卡）；
+  首次运行姿态（`needsSetup`）的 setup 卡对这类 provider 也不再走——
+  否则那张空卡会以"整行"的形式出现。
+- **`deepseek-account` 特例必须保留**：账号路由的 settings namespace 是可配置的 Cordis entry id
+  （默认 `llm-deepseek-account`），`layoutOf` 对它只会答 `unknown`。
+  因此判断**必须带上路由 id**（`providerLayout` 先判 `provider === 'deepseek-account'`）；
+  只按 ns 判会连官方「DeepSeek 账号」卡的编辑器一起禁掉。
+
+### 同步上游时注意
+
+- 这是**被 fork 改过的上游文件**，冲突热点是：
+  `ModelsSection.tsx` 的行渲染（`hasCuratedFields` 的两个使用点）与
+  `ProviderEditor.tsx` 的 `layoutOf` / `providerLayout`。
+- 若上游把 `layoutOf` 改成表驱动、新增 curated layout、或给账号路由改名：
+  **保住 `deepseek-account` 这条特例**，并确认 `unknown` 仍是"没有可编辑字段"的意思；
+  一旦上游给 `unknown` 补上真实字段，这条规则就要重新评估（那时应改为按字段能力判断）。
+- 若上游自己给「编辑」加了开关（例如 `row.editable`）：**优先改用上游的开关并删掉这里的规则**，
+  让这个 fork 改动退场。
+- 同包测试 `tests/components.client.spec.tsx` 的
+  `knows which providers have a curated field set to edit` 与
+  `leaves a provider whose namespace has no curated fields to its seat card`
+  会直接指出规则是否被改坏。
+
 ## 上游同步流程
 
 ```bash
@@ -191,9 +293,29 @@ git rebase upstream/master
    把我们的值贴回去。
 4. `desktop-auto-update-environment.mjs` —— 上游若重新引入 `fixedOrigin`，**必须再改回
    `DOWNLOAD_PROD_ORIGIN`**，否则品牌化会被官方更新覆盖。这是最危险的一条。
+5. **别把品牌与隐私那两条改回去**。系统提示词的身份句与 `session-log-deepseek` 的开关都
+   在**插件层**（`dsh-plugins/dsh-ckjr-brand`），fork 里**刻意不改**上游那两处：
+   `packages/core/system-prompt/src/index.ts:429` 那句 DeepSeek 文案保持原样，
+   `packages/bundle/base/cordis.patch.yml:43` 那行也保持启用——这样上游更新提示词或
+   遥测机制时我们不受影响。**若同步后有人在 fork 里"顺手"把这两处改成 CKJR/disabled，
+   那就是改错地方了**：它会让每一次上游同步都产生冲突，而插件层本来已经解决。
+   唯一需要在 fork 里重算的是生成物 `packages/bundle/ckjr/cordis.patch.yml`（见上一节）。
+6. `packages/client/ui-settings-models/src/client/{ModelsSection,ProviderEditor}.tsx` ——
+   见「设置 → 模型」一节。这两处是 fork 改过的上游文件；冲突时保住 `unknown` 规则
+   （无 curated 字段就不给编辑器）与 `deepseek-account` 特例。
 
 ## 已知待办
 
+- [ ] **重新生成出厂补丁合并层**（`dsh-plugins` 新增了 `dsh-ckjr-brand`，检出的生成物还没跟上）：
+
+      ```bash
+      DSH_CKJR_PLUGINS_ROOT=<dsh-plugins 检出> pnpm --filter @deepseek-ai/dsh-desktop run generate:ckjr-bundle-patch
+      ```
+
+      跑完提交 `packages/bundle/ckjr/cordis.patch.yml`（只多出 `session-log-deepseek` 的
+      disable 行与 `ckjr-brand` 的 insert 行）。**在此之前品牌句与 Session Log 的两条改动
+      都不会生效**——打包流程虽然会在 `pnpm pack` 之前自动重算，但那等于把 fork 的出厂内容
+      交给构建时的插件检出去决定，检出不对就会静默少两条（见上一节的红色警告）。
 - [ ] **跑一次测试套件**。品牌化过程**没有跑过任何测试**：`corepack pnpm install --frozen-lockfile`
       在 1370/1392 个包处超时（npmmirror 反复 `error (23)`），没有 `vitest` 可执行文件。
       已通过 Node 24 类型剥离**实际求值 `locale.ts`** 并与 17 个快照交叉核对（全部通过），

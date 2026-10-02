@@ -13,7 +13,9 @@ import {
   ModelsSection, needsSetup, providerCopy, providerTargetLabel, removeProviderProfile,
 } from '../src/client/ModelsSection.tsx'
 import type { ModelsSectionInjected, ModelsSectionProps } from '../src/client/ModelsSection.tsx'
-import { ProviderEditor, pathOps } from '../src/client/ProviderEditor.tsx'
+import {
+  hasCuratedFields, pathOps, ProviderEditor, providerLayout,
+} from '../src/client/ProviderEditor.tsx'
 import {
   DeepSeekModelsEditor, formatCapacity, modelDrafts, parseCapacity, validateDeepSeekModels,
 } from '../src/client/DeepSeekModelsEditor.tsx'
@@ -404,6 +406,33 @@ describe('ModelsSection', () => {
     ])
   })
 
+  it('leaves a provider whose namespace has no curated fields to its seat card', async () => {
+    // The real case is a third-party route in its own settings namespace (a
+    // plugin's, e.g. ckjr-llm): the editor for it is the `cordis.patch.yml`
+    // hint with a disabled commit action, so the row must not offer to open it
+    // and must not open it by itself.
+    const scripted = scriptedFace()
+    scripted.face.settings.describe.mockResolvedValue(remoteOk({
+      writable: true,
+      hasDocument: false,
+      namespaces: wireNamespaces().map(view => view.ns === 'llm-plain'
+        ? { ...view, value: { profiles: { plain: {} } } }
+        : view),
+    }))
+    const { renderSlot } = await mountFace(scripted)
+
+    // The row itself stays, named as the directory names it.
+    expect(screen.getByText('plain')).toBeTruthy()
+    expect(screen.queryByRole('button', {
+      name: providerCopy(en.editProvider, { provider: 'plain', displayName: 'plain' }),
+    })).toBeNull()
+    // No editor in any posture: neither the hint nor the commit it disables.
+    expect(screen.queryByText(content => content.includes(en.advancedHint))).toBeNull()
+    expect(screen.queryByRole('button', { name: en.apply })).toBeNull()
+    // The provider-card seat is where such a provider is presented.
+    expect(cardSeatCalls(renderSlot)).toContainEqual(['plain', true, false, 'llm-plain'])
+  })
+
   it('dispatches the provider-card seat inside the first-run setup card', async () => {
     const { renderSlot } = await mountFirstRun()
     expect(cardSeatCalls(renderSlot)).toContainEqual(['deepseek-official', true, false, 'llm-deepseek'])
@@ -535,6 +564,22 @@ describe('ModelsSection', () => {
     // A user who can already reach some provider is not in the first-run
     // posture, so nothing on the page opens itself.
     expect(needsSetup(row(undefined), true)).toBe(false)
+  })
+
+  it('knows which providers have a curated field set to edit', () => {
+    // The route id outranks the namespace: the account route edits the
+    // DeepSeek layout from its own configurable namespace, so a namespace-only
+    // question would hide the official account card's editor.
+    expect(providerLayout('deepseek-account', 'llm-deepseek-account')).toBe('deepseek')
+    expect(providerLayout('deepseek-official', 'llm-deepseek')).toBe('deepseek')
+    expect(providerLayout('openai', 'llm-pi-ai')).toBe('pi-ai')
+    expect(hasCuratedFields('deepseek-account', 'llm-deepseek-account')).toBe(true)
+    expect(hasCuratedFields('deepseek-official', 'llm-deepseek')).toBe(true)
+    expect(hasCuratedFields('openai', 'llm-pi-ai')).toBe(true)
+    // A namespace with no curated field set of ours: its editor is the hint
+    // alone, which is why no row offers it.
+    expect(providerLayout('ckjr', 'ckjr-llm')).toBe('unknown')
+    expect(hasCuratedFields('ckjr', 'ckjr-llm')).toBe(false)
   })
 
   it('derives conventional credential references from route ids', () => {
