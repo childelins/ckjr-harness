@@ -42,7 +42,7 @@ winget install --id Microsoft.VisualStudio.2022.BuildTools `
 **2. 插件检出**（出厂插件在另一个仓库）
 
 ```bash
-git clone git@github.com:childelins/dsh-plugins.git ckjr-plugins
+git clone git@github.com:childelins/dsh-ckjr-plugins.git ckjr-plugins
 ```
 
 `ckjr-plugins/` 已在 `.gitignore` 里。**新增插件不需要改本仓库任何文件**——

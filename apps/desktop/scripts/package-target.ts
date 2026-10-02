@@ -49,7 +49,7 @@ const AUTOMATIC_BUILD_VERSION = 'auto'
 
 /**
  * 出厂预装的创客匠人 (CKJR) 包目录：bundle 本身在 fork 里（packages/bundle/ckjr），
- * 插件在 childelins/dsh-plugins 的检出里。
+ * 插件在 childelins/dsh-ckjr-plugins 的检出里。
  *
  * 插件检出的默认位置是仓库根的 `ckjr-plugins/` —— **CI 依赖这个默认值**。
  * 本地想把它放在仓库外时用 `$DSH_CKJR_PLUGINS_ROOT` 指过去，这样插件仓库与 fork
@@ -503,7 +503,7 @@ export async function packageTarget(
   if (missingCkjrPackages.length > 0) {
     throw new Error(
       `desktop package: missing CKJR plugin package(s): ${missingCkjrPackages.join(', ')}; `
-      + 'check out git@github.com:childelins/dsh-plugins.git and point $DSH_CKJR_PLUGINS_ROOT at it '
+      + 'check out git@github.com:childelins/dsh-ckjr-plugins.git and point $DSH_CKJR_PLUGINS_ROOT at it '
       + '(default location: ckjr-plugins/) before packaging',
     )
   }

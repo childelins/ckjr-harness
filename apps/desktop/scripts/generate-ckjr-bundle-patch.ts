@@ -6,7 +6,7 @@
  * 因此 ckjr-plugins/ 里各插件的 cordis.patch.yml 必须合成一份，否则安装包只会装上
  * 插件、却不会把它们的行接进 profile（装上了却不起作用，最难查的一种失败）。
  *
- * 为什么是生成而不是手工维护：源在另一个仓库（childelins/dsh-plugins）。手工合并意味着
+ * 为什么是生成而不是手工维护：源在另一个仓库（childelins/dsh-ckjr-plugins）。手工合并意味着
  * 每次改插件 patch 都要记得同步这里，忘了不会报错，只会静默产出行为不对的安装包。
  * 由本脚本扫目录生成后，**在 dsh-plugins 里新增插件不需要改 fork 的任何文件**。
  *
@@ -24,7 +24,7 @@ import { join, resolve } from 'node:path'
 
 const REPOSITORY_ROOT = resolve(import.meta.dirname, '..', '..', '..')
 /**
- * childelins/dsh-plugins 的检出位置。
+ * childelins/dsh-ckjr-plugins 的检出位置。
  *
  * 默认在仓库根的 `ckjr-plugins/` —— **CI 依赖这个默认值**（工作流把插件 clone 到
  * `ckjr-plugins/`，且不设任何环境变量）。本地把插件检出放在仓库外时用
@@ -38,7 +38,7 @@ const BUNDLE_DIRECTORY = join(REPOSITORY_ROOT, 'packages', 'bundle', 'ckjr')
 export const CKJR_BUNDLE_PATCH = join(BUNDLE_DIRECTORY, 'cordis.patch.yml')
 
 const MISSING_CHECKOUT_HINT =
-  'git@github.com:childelins/dsh-plugins.git 检出到 ckjr-plugins/ 之后再构建'
+  'git@github.com:childelins/dsh-ckjr-plugins.git 检出到 ckjr-plugins/ 之后再构建'
   + '（CI 由工作流自动检出，本地见 CKJR-FORK.md）'
 
 /** 一个参与合并的插件：目录名、包名，以及它自己那份补丁的原文。 */

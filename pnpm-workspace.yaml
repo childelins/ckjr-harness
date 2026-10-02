@@ -1,7 +1,7 @@
 packages:
   - vendor/*
   - packages/*/*
-  # 创客匠人 (CKJR) 出厂插件刻意【不】列在这里：childelins/dsh-plugins 检出在
+  # 创客匠人 (CKJR) 出厂插件刻意【不】列在这里：childelins/dsh-ckjr-plugins 检出在
   # ckjr-plugins/，但把它当成工作区成员会给 pnpm-lock.yaml 引入 ckjr-plugins/* 的
   # importer；插件声明的是普通 peer 版本范围（不是 workspace:），pnpm 会为这些
   # importer 自动安装 peer，于是锁文件必须全量重解析——重解析又会浮动传递依赖

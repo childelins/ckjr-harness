@@ -46,7 +46,7 @@ Write-Host "  VS C++ 工具: $vs"
 if (-not (Test-Path (Join-Path $repo 'ckjr-plugins/dsh-account/package.json'))) {
   Fail @"
 缺少插件检出 ckjr-plugins/。先检出：
-  git clone git@github.com:childelins/dsh-plugins.git ckjr-plugins
+  git clone git@github.com:childelins/dsh-ckjr-plugins.git ckjr-plugins
 "@
 }
 $plugins = Get-ChildItem (Join-Path $repo 'ckjr-plugins') -Directory |

@@ -62,7 +62,7 @@ env:
   DSH_TELEMETRY_DISABLED: '1'
   # CKJR 插件包随应用一起打包：在安装依赖前把插件仓库检出到 ckjr-plugins/，
   # 由 fork 侧的 pnpm 工作区 glob（feature/ckjr-bundled-plugins）把它纳入工作区。
-  CKJR_PLUGINS_REPOSITORY: childelins/dsh-plugins
+  CKJR_PLUGINS_REPOSITORY: childelins/dsh-ckjr-plugins
   CKJR_PLUGINS_PATH: ckjr-plugins
 
 defaults:
@@ -938,7 +938,7 @@ jobs:
 #   CKJR_WINDOWS_SIGNTOOL / CKJR_WINDOWS_KEY_CONTAINER  仅签名 Windows 构建需要
 #
 # 机密（Secrets）：
-#   CKJR_PLUGINS_TOKEN             读 childelins/dsh-plugins；缺失且 CKJR_PLUGINS_PUBLIC≠true 时立即失败
+#   CKJR_PLUGINS_TOKEN             读 childelins/dsh-ckjr-plugins；缺失且 CKJR_PLUGINS_PUBLIC≠true 时立即失败
 #   CKJR_MACOS_CERT_P12_BASE64     Developer ID Application p12（base64）
 #   CKJR_MACOS_CERT_PASSWORD       p12 导出密码；留空表示未加密 p12
 #   CKJR_APPLE_API_KEY_BASE64 / CKJR_APPLE_API_KEY_ID / CKJR_APPLE_API_ISSUER   公证策略 A

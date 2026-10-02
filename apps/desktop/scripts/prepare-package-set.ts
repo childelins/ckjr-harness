@@ -31,7 +31,7 @@ const DSH_PACKAGE = '@deepseek-ai/dsh'
 /**
  * 出厂预装的创客匠人 (CKJR) 包一律作为闭包根，按包名前缀识别。
  *
- * 用前缀而不是写死清单：在 childelins/dsh-plugins 里新增插件后，它会被
+ * 用前缀而不是写死清单：在 childelins/dsh-ckjr-plugins 里新增插件后，它会被
  * package-target.ts 自动打包进 packedCkjr，这里也就自动成为根——fork 侧不需要
  * 改任何文件。写死清单的话，漏加一个插件只会导致安装包里静默少一个包。
  */

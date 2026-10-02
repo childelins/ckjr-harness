@@ -15,7 +15,7 @@ This bundle is the single profile layer the branded Desktop app ships for 创客
 
 `packages/boot/app-boot` ships this bundle in `PROFILE_TEMPLATES.web.bundles`, last, so every Desktop profile initialized by the branded app selects it. A profile that already exists is never rewritten: a merchant upgrading from a build that did not bundle these plugins keeps the bundle selection it has.
 
-This repository's Desktop packaging (`apps/desktop/scripts/package-target.ts`) packs the bundle and the three plugins it depends on into the local npm package set, which `apps/desktop/src/project-manager.ts` turns into `file:` dependencies of the shipped runtime project. The three plugin packages themselves live in the separate [`childelins/dsh-plugins`](https://github.com/childelins/dsh-plugins) repository, checked out at `ckjr-plugins/` for a build.
+This repository's Desktop packaging (`apps/desktop/scripts/package-target.ts`) packs the bundle and the three plugins it depends on into the local npm package set, which `apps/desktop/src/project-manager.ts` turns into `file:` dependencies of the shipped runtime project. The three plugin packages themselves live in the separate [`childelins/dsh-ckjr-plugins`](https://github.com/childelins/dsh-ckjr-plugins) repository, checked out at `ckjr-plugins/` for a build.
 
 ## Understand the implementation
 
@@ -35,6 +35,6 @@ The bundle itself adds no request prefix; each inserted row's package owns any c
 
 ## Known Limitations and Deferred Work
 
-- **The two plugin patches are maintained twice** — `cordis.patch.yml` here and the three files in `childelins/dsh-plugins` must stay equivalent; a change on either side that is not mirrored leaves the installed app mounting a different row set than the plugin repository describes.
+- **The two plugin patches are maintained twice** — `cordis.patch.yml` here and the three files in `childelins/dsh-ckjr-plugins` must stay equivalent; a change on either side that is not mirrored leaves the installed app mounting a different row set than the plugin repository describes.
 - **An existing profile is not upgraded** — profile initialization is create-only, so a Desktop install whose `profiles/desktop` predates this bundle keeps its old bundle list until the profile is recreated.
 - **The plugin checkout is a build input** — `ckjr-plugins/` must be present before `pnpm install`; the workspace entry for it is a required part of the fork, not an optional extra.

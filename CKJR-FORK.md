@@ -14,7 +14,7 @@
 | 项 | 值 |
 |---|---|
 | 上游 | `git@github.com:deepseek-ai/deepseek-harness.git` |
-| fork | `git@github.com:childelins/deepseek-harness.git` |
+| fork | `git@github.com:childelins/ckjr-harness.git` |
 | 品牌化起点 | `639ed01539`（上游 `master`，DSH `0.2.0-rc.2`） |
 | 分支 | `feature/ckjr-branding` |
 
@@ -27,7 +27,7 @@
 
 | 位置 | 内容 | 归谁 |
 |---|---|---|
-| `childelins/dsh-plugins` 仓库 | 各 CKJR 插件包及其 `cordis.patch.yml` | 另一个仓库，**唯一真源** |
+| `childelins/dsh-ckjr-plugins` 仓库 | 各 CKJR 插件包及其 `cordis.patch.yml` | 另一个仓库，**唯一真源** |
 | `<fork>/ckjr-plugins/` | 构建时对该仓库的检出（CI 用 `actions/checkout` 放到这个固定路径） | 不是本 fork 的内容，已写进 `.gitignore` |
 | `packages/bundle/ckjr/` | 本 fork 的出厂 bundle `@ckjr/dsh-bundle-ckjr`，一个纯 patch 载体 | 本 fork |
 | `packages/bundle/ckjr/cordis.patch.yml` | **生成物**：扫描 `ckjr-plugins/*` 合并而成 | 由脚本生成，勿手工编辑 |
@@ -41,7 +41,7 @@ patch 层**；而 profile 的 `bundles` 名单又必须是 `packages/*/*` 下的
 **这份合成补丁是生成物**，由 `apps/desktop/scripts/generate-ckjr-bundle-patch.ts` 扫描
 `ckjr-plugins/*/cordis.patch.yml` 生成，于是：
 
-- 在 `dsh-plugins` 里**新增插件不用改本 fork 的任何文件**（打包流程会自动重新生成与重新打包）；
+- 在 `dsh-ckjr-plugins` 里**新增插件不用改本 fork 的任何文件**（打包流程会自动重新生成与重新打包）；
 - 改插件 patch 也不用同步第二处；万一生成物过期，`--check` 会判定不一致并**直接失败**，
   而不是静默产出行为不对的安装包。
 
@@ -306,7 +306,7 @@ git rebase upstream/master
 
 ## 已知待办
 
-- [ ] **重新生成出厂补丁合并层**（`dsh-plugins` 新增了 `dsh-ckjr-brand`，检出的生成物还没跟上）：
+- [ ] **重新生成出厂补丁合并层**（`dsh-ckjr-plugins` 新增了 `dsh-ckjr-brand`，检出的生成物还没跟上）：
 
       ```bash
       DSH_CKJR_PLUGINS_ROOT=<dsh-plugins 检出> pnpm --filter @deepseek-ai/dsh-desktop run generate:ckjr-bundle-patch

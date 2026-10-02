@@ -15,7 +15,7 @@ kind: "package-bundle"
 
 `packages/boot/app-boot` 把本 bundle 放在 `PROFILE_TEMPLATES.web.bundles` 的最后一项，因此品牌化应用初始化的每个 Desktop profile 都会选中它。已存在的 profile 不会被改写：从「未预装插件」的版本升级上来的商家，保留它原有的 bundle 选择。
 
-本仓库的桌面端打包（`apps/desktop/scripts/package-target.ts`）把本 bundle 与它依赖的三个插件一起打进本地 npm 包集合，再由 `apps/desktop/src/project-manager.ts` 变成出厂运行时工程的 `file:` 依赖。三个插件包本身位于另一个仓库 [`childelins/dsh-plugins`](https://github.com/childelins/dsh-plugins)，构建时检出到 `ckjr-plugins/`。
+本仓库的桌面端打包（`apps/desktop/scripts/package-target.ts`）把本 bundle 与它依赖的三个插件一起打进本地 npm 包集合，再由 `apps/desktop/src/project-manager.ts` 变成出厂运行时工程的 `file:` 依赖。三个插件包本身位于另一个仓库 [`childelins/dsh-ckjr-plugins`](https://github.com/childelins/dsh-ckjr-plugins)，构建时检出到 `ckjr-plugins/`。
 
 ## 实现说明
 
@@ -35,6 +35,6 @@ kind: "package-bundle"
 
 ## 已知限制与待办
 
-- **三份插件 patch 被维护了两遍** —— 本文件与 `childelins/dsh-plugins` 里的三份必须保持一致；任一侧改了不同步，装出来的应用就会挂载与插件仓库描述不同的一套行。
+- **三份插件 patch 被维护了两遍** —— 本文件与 `childelins/dsh-ckjr-plugins` 里的三份必须保持一致；任一侧改了不同步，装出来的应用就会挂载与插件仓库描述不同的一套行。
 - **已存在的 profile 不会升级** —— profile 初始化是「只在不存在时创建」，因此 `profiles/desktop` 早于本 bundle 的 Desktop 安装会一直保留旧 bundle 列表，直到 profile 被重建。
 - **插件检出是构建输入** —— `pnpm install` 之前必须存在 `ckjr-plugins/`；工作区里那一条不是可选项，而是本 fork 的必需部分。
