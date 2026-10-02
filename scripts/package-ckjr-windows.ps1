@@ -1,4 +1,4 @@
-﻿# 本地打出创客匠人 (CKJR) Windows 未签名安装包。
+# 本地打出创客匠人 (CKJR) Windows 未签名安装包。
 #
 # 用法（在仓库根目录，管理员不是必需的，但要有 VS C++ 生成工具）：
 #   pwsh -NoProfile -File scripts/package-ckjr-windows.ps1
@@ -43,14 +43,21 @@ if (-not $vs) { Fail 'Visual Studio 存在但没有 C++ 生成工具（Microsoft
 Write-Host "  VS C++ 工具: $vs"
 
 # 插件检出：package-target.ts 缺它就直接失败，不产出没有插件的安装包。
-if (-not (Test-Path (Join-Path $repo 'ckjr-plugins/dsh-account/package.json'))) {
+#
+# 判「检出存在且至少有一个带 package.json 的插件」，而不是判某一个固定的目录名：
+# 这里原先判的是 `dsh-account`，插件仓库改名成 `dsh-ckjr-*` 之后该路径不再存在，
+# 于是这一步**必然**失败、根本走不到打包。规则与生成 bundle 补丁的
+# apps/desktop/scripts/generate-ckjr-bundle-patch.ts 一致（它也是扫目录找插件）。
+$pluginRoot = Join-Path $repo 'ckjr-plugins'
+$plugins = if (Test-Path $pluginRoot) {
+  @(Get-ChildItem $pluginRoot -Directory | Where-Object { Test-Path (Join-Path $_.FullName 'package.json') })
+} else { @() }
+if ($plugins.Count -eq 0) {
   Fail @"
 缺少插件检出 ckjr-plugins/。先检出：
   git clone git@github.com:childelins/dsh-ckjr-plugins.git ckjr-plugins
 "@
 }
-$plugins = Get-ChildItem (Join-Path $repo 'ckjr-plugins') -Directory |
-  Where-Object { Test-Path (Join-Path $_.FullName 'package.json') }
 Write-Host "  插件检出: $($plugins.Count) 个包（$(($plugins.Name) -join ', ')）"
 
 # 打包环境文件：未签名 + test 部署只需要强更策略源。
