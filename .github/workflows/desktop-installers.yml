@@ -1016,6 +1016,12 @@ jobs:
       - name: Publish the installers on the tag's release
         env:
           GH_TOKEN: ${{ github.token }}
+          # 本作业只下载构建产物（actions/download-artifact），工作区里**没有** git 仓库。
+          # gh 默认靠 git remote 解析目标仓库；缺这个变量时 `gh release create` 会以
+          # "failed to run git: fatal: not a git repository" 失败——构建成功、产物也已上传，
+          # 却唯独在最后一步挂不上 Release。显式给出仓库名即可，比为此再 checkout 一次
+          # 整个仓库轻得多。
+          GH_REPO: ${{ github.repository }}
         run: |
           set -eo pipefail
           ls -l dist/desktop
