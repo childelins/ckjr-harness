@@ -202,8 +202,10 @@
       name: '@ckjr/dsh-ckjr-llm'
       config:
         baseURL: 'https://agent-cs.myckjr.com'
-        # 保留但留空：只有在需要为某个模型补充**网关未披露**的能力
-        # （如 `inputModalities`、单模型 `maxTokens`）时才按 id 添加条目。
+        # 保留但留空：网关不披露的**能力**（`inputModalities`、单模型 `maxTokens`）
+        # 已由插件内置的 `KNOWN_MODEL_CAPABILITIES` 按 id 补齐，这里不必重复。
+        # 只在需要按部署**覆盖**某个模型时才加条目——可以显式写
+        # `inputModalities: ['text']` 把某个模型的图片能力关掉。
         # 合并时名称与上下文窗口始终以网关为准。
         models: []
         # 模型清单的进程内缓存时长（毫秒）。模型列表不会每次开设置页都重新拉取；
