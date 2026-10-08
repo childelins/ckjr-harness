@@ -185,6 +185,9 @@ it.each([false, true])('starts welcome onboarding without carrying update focus 
   if (updated) vi.stubGlobal('process', { ...process, platform: 'win32', argv: ['desktop', '--updated'] })
   vi.useFakeTimers()
   vi.stubEnv('DSH_CLIENT_VERSION', '1.2.3')
+  // 未打包的构建从进程环境取出厂插件地址（打包构建从 manifest 取）。
+  vi.stubEnv('CKJR_AUTH_ORIGIN', 'https://auth.example.com')
+  vi.stubEnv('CKJR_GATEWAY_ORIGIN', 'https://gateway.example.com')
   vi.stubEnv('DSH_DESKTOP_DEV_PROJECT_DIR', '/development-profile')
   vi.stubEnv('DSH_DESKTOP_NODE_BINARY', '/runtime/node')
   vi.stubEnv('DSH_DESKTOP_PNPM_ENTRY', '/runtime/pnpm')

@@ -1,14 +1,6 @@
 /** Resolve the required policy service from the same deployment as updater publication. */
 import { resolveDesktopAutoUpdateEnvironment } from './desktop-auto-update-environment.mjs'
-
-function origin(value, name) {
-  let url
-  try { url = new URL(value) } catch { throw new Error(`desktop package: ${name} requires an HTTPS origin`) }
-  if (url.protocol !== 'https:' || url.username || url.password || url.pathname !== '/' || url.search || url.hash) {
-    throw new Error(`desktop package: ${name} requires an HTTPS origin without credentials, path, query, or fragment`)
-  }
-  return url.origin
-}
+import { releaseOrigin } from './release-origin.mjs'
 
 /**
  * Resolve mandatory policy metadata before preparing artifacts or accessing signing hardware.
@@ -18,7 +10,7 @@ function origin(value, name) {
 export function resolveDesktopPolicyEnvironment(environment) {
   const deployment = resolveDesktopAutoUpdateEnvironment(environment)
   const name = deployment === 'test' ? 'DSH_DESKTOP_MANDATORY_UPDATE_TEST_ORIGIN' : 'DSH_DESKTOP_MANDATORY_UPDATE_PROD_ORIGIN'
-  const selected = origin(environment[name], name)
+  const selected = releaseOrigin(environment[name], name)
   let settings = {}
   if (environment.DSH_DESKTOP_MANDATORY_UPDATE_CONFIG !== undefined) {
     try { settings = JSON.parse(environment.DSH_DESKTOP_MANDATORY_UPDATE_CONFIG) }
@@ -38,7 +30,7 @@ export function resolveDesktopPolicyEnvironment(environment) {
     throw new Error('desktop package: production policy must not configure allowedAuthOrigins')
   }
   return { ...settings, origin: selected,
-    allowedPageOrigins: pages.map(value => origin(value, 'allowedPageOrigins')),
-    ...(deployment === 'test' ? { allowedAuthOrigins: authOrigins.map(value => origin(value, 'allowedAuthOrigins')) } : {}),
+    allowedPageOrigins: pages.map(value => releaseOrigin(value, 'allowedPageOrigins')),
+    ...(deployment === 'test' ? { allowedAuthOrigins: authOrigins.map(value => releaseOrigin(value, 'allowedAuthOrigins')) } : {}),
     authentication: deployment === 'test' ? 'feishu-test' : 'anonymous' }
 }

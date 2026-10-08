@@ -312,9 +312,14 @@ vi.mock('../src/background-notice.ts', () => ({ DesktopBackgroundNotice: class {
 } }))
 vi.mock('node:fs/promises', async (importOriginal) => {
   const original = await importOriginal<typeof import('node:fs/promises')>()
+  // 打包后的 manifest 带部署元数据（应用 id、策略、出厂插件地址）。多数用例把
+  // getAppPath() 指向 'desktop-test-app'，也有用例指向真实源码目录，两条路径都要
+  // 给出同一个「已打包」的 manifest——源码 manifest 里没有 electron-builder 注入的字段。
+  const manifests = new Set([join('desktop-test-app', 'package.json'), join(import.meta.dirname, '..', 'package.json')])
   return { ...original, readFile: vi.fn((path: Parameters<typeof original.readFile>[0], encoding?: 'utf8') => {
-    if (path === join('desktop-test-app', 'package.json')) {
-      return Promise.resolve(JSON.stringify({ dshDesktopAppId: 'com.deepseek.dsh', dshMandatoryUpdatePolicy: harness.embeddedPolicy }))
+    if (manifests.has(String(path))) {
+      return Promise.resolve(JSON.stringify({ dshDesktopAppId: 'com.deepseek.dsh', dshMandatoryUpdatePolicy: harness.embeddedPolicy,
+        dshCkjrOrigins: { authOrigin: 'https://auth.example.com', gatewayOrigin: 'https://gateway.example.com' } }))
     }
     return encoding === undefined ? original.readFile(path) : original.readFile(path, encoding)
   }) }
@@ -425,6 +430,8 @@ beforeEach(() => {
   vi.stubEnv('DSH_DESKTOP_MANDATORY_UPDATE_CONFIG', undefined)
   vi.stubEnv('DSH_DESKTOP_UPDATE_JOURNAL_DIR', undefined)
   vi.stubEnv('DSH_CLIENT_VERSION', '1.2.3')
+  vi.stubEnv('CKJR_AUTH_ORIGIN', 'https://auth.example.com')
+  vi.stubEnv('CKJR_GATEWAY_ORIGIN', 'https://gateway.example.com')
   harness.analyticsEnabled = true
 })
 
@@ -2110,6 +2117,9 @@ describe('desktop main startup', () => {
     })
     expect(harness.hosts[0]!.environment).not.toBe(process.env)
     expect(harness.hosts[0]!.environment?.DSH_CLIENT_VERSION).toBe('1.2.3')
+    // 出厂插件的部署地址随包固化在 manifest 里，Host 启动时由 main.ts 注入这两个变量。
+    expect(harness.hosts[0]!.environment?.CKJR_AUTH_ORIGIN).toBe('https://auth.example.com')
+    expect(harness.hosts[0]!.environment?.CKJR_GATEWAY_ORIGIN).toBe('https://gateway.example.com')
     expect(harness.hosts[0]!.environment?.DSH_TEST_LOGIN_SHELL).toBe('login')
     expect(console.warn).toHaveBeenCalledWith('desktop login shell: /account/shell failed (timeout)')
     expect(harness.analytics).toHaveBeenCalledExactlyOnceWith({ eventName: 'desktop_app_launch', timestamp: Date.now(), attributes: {} })

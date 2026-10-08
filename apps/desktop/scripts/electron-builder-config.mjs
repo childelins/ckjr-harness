@@ -23,6 +23,7 @@ import { resolveDesktopAutoUpdateConfig } from './desktop-auto-update-environmen
 import { resolveDesktopBuildCommit } from './desktop-build-commit.mjs'
 import { resolveDesktopBuildVersion } from './desktop-build-version.mjs'
 import { resolveDesktopPolicyEnvironment } from './desktop-policy-environment.mjs'
+import { resolveDesktopCkjrEnvironment } from './desktop-ckjr-environment.mjs'
 import { desktopTargetBuildPaths, resolveDesktopBuildTarget } from './desktop-build-paths.mjs'
 import { installWindowsDirectoryInstaller } from './windows-directory-installer.mjs'
 import { preserveWindowsRuntimeSignature, signWindowsCode } from './windows-runtime-signature.mjs'
@@ -60,6 +61,7 @@ export function createElectronBuilderConfig(
 ) {
   const appId = resolveDesktopAppId(env)
   const policy = resolveDesktopPolicyEnvironment(env)
+  const ckjr = resolveDesktopCkjrEnvironment(env)
   const targetPlatform = env.DSH_DESKTOP_TARGET_PLATFORM
   const resolvedPlatform = targetPlatform ?? hostPlatform
   const resolvedArch = env.DSH_DESKTOP_TARGET_ARCH ?? hostArch
@@ -111,6 +113,10 @@ export function createElectronBuilderConfig(
     extraMetadata: {
       dshDesktopAppId: appId,
       dshMandatoryUpdatePolicy: policy,
+      // 出厂插件的部署地址随包固化：Host 启动时由 main.ts 注入环境变量，插件补丁用
+      // `!!js process.env.CKJR_*_ORIGIN` 读取。放进 manifest 而不是只放构建变量，是为了
+      // 让一个产物自己就能说明它指向哪个环境（`resources/app.asar/package.json`）。
+      dshCkjrOrigins: ckjr,
       ...buildVersion === productVersion ? {} : { version: buildVersion },
       ...packaged === undefined ? {} : { dshBuildCommit: packaged.commit, dshBuildDirty: packaged.dirty },
     },

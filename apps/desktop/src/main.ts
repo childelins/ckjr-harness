@@ -27,6 +27,7 @@ import {
   type MenuItemConstructorOptions,
 } from 'electron'
 import { BRAND } from './brand.ts'
+import { desktopCkjrHostEnvironment, resolveDesktopCkjrOrigins } from './ckjr-origins.ts'
 import { resolveDesktopPaths } from './paths.ts'
 import { DesktopProjectManager } from './project-manager.ts'
 import { DesktopHostFatalError, DesktopHostProcess, DesktopHostUncleanExitError } from './host-process.ts'
@@ -340,7 +341,26 @@ async function main(): Promise<void> {
     return result.environment
   })
   let hostEnvironment: NodeJS.ProcessEnv = process.env
-  const prepareHostEnvironment = async (): Promise<void> => { hostEnvironment = await loginShell }
+  // 打包后的部署元数据（应用 id、强制更新策略、出厂插件地址）都在这份 manifest 里；
+  // 启动期有多个消费者，共用一次读取。
+  let manifestRead: Promise<object> | undefined
+  const readDesktopManifest = async (): Promise<object> => {
+    manifestRead ??= readFile(join(app.getAppPath(), 'package.json'), 'utf8').then((contents) => {
+      const parsed: unknown = JSON.parse(contents)
+      if (typeof parsed !== 'object' || parsed === null) throw new Error('desktop policy: invalid application manifest')
+      return parsed
+    })
+    return manifestRead
+  }
+  const prepareHostEnvironment = async (): Promise<void> => {
+    const manifest = await readDesktopManifest()
+    // 出厂插件不写死部署地址：Host 用这两个变量把地址交给 ckjr-plugins 的补丁。
+    // 打包构建从 manifest 取（随包固化、产物自证环境），未打包的开发构建从进程环境取。
+    const origins = resolveDesktopCkjrOrigins(app.isPackaged
+      ? ('dshCkjrOrigins' in manifest ? manifest.dshCkjrOrigins : undefined)
+      : { authOrigin: process.env.CKJR_AUTH_ORIGIN, gatewayOrigin: process.env.CKJR_GATEWAY_ORIGIN })
+    hostEnvironment = { ...await loginShell, ...desktopCkjrHostEnvironment(origins) }
+  }
   let quitting = false
   let startup: Promise<void> | undefined
   let workspaceRecovery: Promise<void> | undefined
@@ -1286,8 +1306,7 @@ async function main(): Promise<void> {
   })
 
   mainWindow = createMainWindow()
-  const manifest: unknown = JSON.parse(await readFile(join(app.getAppPath(), 'package.json'), 'utf8'))
-  if (typeof manifest !== 'object' || manifest === null) throw new Error('desktop policy: invalid application manifest')
+  const manifest = await readDesktopManifest()
   const developmentPolicy = app.isPackaged ? undefined : process.env.DSH_DESKTOP_MANDATORY_UPDATE_CONFIG
   const policyInput: unknown = app.isPackaged
     ? ('dshMandatoryUpdatePolicy' in manifest ? manifest.dshMandatoryUpdatePolicy : undefined)

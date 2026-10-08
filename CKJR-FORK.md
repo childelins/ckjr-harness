@@ -244,6 +244,30 @@ production: { originEnvName: 'DOWNLOAD_PROD_ORIGIN', fixedOrigin: undefined, …
 - 永远不会回落到官方源。
 - 上传仍走 `DOWNLOAD_{TEST,PROD}_COS_*`（腾讯 COS），bucket 与 `dsh-desk/` 前缀未动。
 
+## 出厂插件的部署地址：两个环境变量，不写死域名
+
+`dsh-ckjr-account` / `dsh-ckjr-llm` 的补丁原先写死了测试环境域名（`kpapi-cs.ckjr001.com`、
+`agent-cs.myckjr.com`），换成正式域名就得改插件仓、重生成补丁层、重打包、重发版。现在只有
+**两个环境变量**：
+
+| 变量 | 含义 | 消费者 |
+|---|---|---|
+| `CKJR_AUTH_ORIGIN` | 商家 SaaS（lecturer-api）origin：PKCE 授权/换令牌、用量与充值页 | `dsh-ckjr-account` |
+| `CKJR_GATEWAY_ORIGIN` | ckjr-agent 网关根（适配器自己拼 `/v1/messages`） | `dsh-ckjr-account`、`dsh-ckjr-llm` |
+
+链路：`.env.windows` / `.env.macos` → 打包期 `resolveDesktopCkjrEnvironment()`（无路径 HTTPS
+origin 校验，缺项即失败）→ `extraMetadata.dshCkjrOrigins`（产物自证它属于哪个环境）→ `main.ts`
+读出并注入 Host 进程环境 → 补丁里的 `!!js process.env.CKJR_*_ORIGIN`。**换环境只改 dotenv 两行
++ 重打包，不改任何代码。**
+
+三条约束：
+
+- 补丁里的表达式对**缺失与空值都抛错**，绝不回落测试域名（与更新源 fail-closed 同一原则）；
+  这也拦住了 `dsh-ckjr-llm` 内部三处 `?? DEFAULT_GATEWAY_ORIGIN` 的静默回落。
+- `usageUrl` / `topUpUrl` 不再由补丁给出：`dsh-ckjr-account` 默认把它们指向**已解析的**
+  `authOrigin`，避免「登录跳正式、用量链接跳测试」的错配。
+- 未打包的开发构建从进程环境取这两个变量（`app.isPackaged === false`）。
+
 ## 设置 → 模型：没有 curated 字段的 provider 不再有「编辑」与占位编辑器
 
 **现象**：设置 → 模型的「创客匠人」卡片上，除了我方 `dsh-ckjr-client-ui` 通过

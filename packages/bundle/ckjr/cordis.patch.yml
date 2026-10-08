@@ -30,6 +30,16 @@
 # implementation of the same `deepseekAccount` service. The shipped row is
 # disabled rather than renamed: a patch addresses rows by id and replaces their
 # whole `config`, so the replacement takes a new id of its own.
+#
+# 部署地址**不写死在这里**：测试与正式环境的域名不同，写死等于换域名要改插件、重生成
+# 补丁层、重打包、重发版。桌面端在打包期解析 `CKJR_AUTH_ORIGIN` / `CKJR_GATEWAY_ORIGIN`
+# （HTTPS origin，缺项即打包失败），运行时随 host 进程环境传进来，这里用 cordis.yml
+# 支持的 `!!js` 启动时表达式读取（AGENTS.md：cordis.yml allows `!!js` under plugin
+# `config`）。表达式对**缺失与空值都直接抛错**，绝不回落测试域名——与更新源 fail-closed
+# 同一条原则；插件自己的 `requireOrigin` 还会再校验一次是否是无路径的 origin。
+#
+# `usageUrl` / `topUpUrl` 不在这里给：插件把它们默认成**已解析的 authOrigin** 的根，
+# 于是只配一个 `authOrigin` 就不会出现「登录跳正式、用量链接跳测试」的错配。
 - id: deepseek-account
   name: '@deepseek-ai/dsh-deepseek-account-platform'
   disabled: true
@@ -39,12 +49,9 @@
       name: '@ckjr/dsh-ckjr-account'
       config:
         # lecturer-api (the merchant SaaS): PKCE authorize/token endpoints.
-        authOrigin: 'https://kpapi-cs.ckjr001.com'
+        authOrigin: !!js (process.env.CKJR_AUTH_ORIGIN || (() => { throw new Error('CKJR_AUTH_ORIGIN 未配置') })())
         # ckjr-agent gateway root; the LLM adapter appends `/v1/messages`.
-        gatewayOrigin: 'https://agent-cs.myckjr.com'
-        # Browser destinations the shell opens from the account surface.
-        usageUrl: 'https://kpapi-cs.ckjr001.com/'
-        topUpUrl: 'https://kpapi-cs.ckjr001.com/'
+        gatewayOrigin: !!js (process.env.CKJR_GATEWAY_ORIGIN || (() => { throw new Error('CKJR_GATEWAY_ORIGIN 未配置') })())
         clientId: 'dsh-desktop'
 
 # ===== @ckjr/dsh-ckjr-brand  (ckjr-plugins/dsh-ckjr-brand) =====
@@ -202,7 +209,12 @@
     - id: ckjr-llm
       name: '@ckjr/dsh-ckjr-llm'
       config:
-        baseURL: 'https://agent-cs.myckjr.com'
+        # 网关根来自环境变量（打包期由桌面端按部署环境解析），不写死：测试与正式的网关
+        # 不同域名，写死等于换环境要改插件、重生成补丁层、重打包、重发版。
+        # 表达式对缺失与空值都直接抛错：插件内部有三处 `?? DEFAULT_GATEWAY_ORIGIN`
+        # 回落（`index.js` 的 Config 默认与两处 `gatewayOf`），不在这里拦住就会**静默
+        # 指向测试网关**——与更新源 fail-closed 同一条原则。
+        baseURL: !!js (process.env.CKJR_GATEWAY_ORIGIN || (() => { throw new Error('CKJR_GATEWAY_ORIGIN 未配置') })())
         # 保留但留空：网关不披露的**能力**（`inputModalities`、单模型 `maxTokens`）
         # 已由插件内置的 `KNOWN_MODEL_CAPABILITIES` 按 id 补齐，这里不必重复。
         # 只在需要按部署**覆盖**某个模型时才加条目——可以显式写
@@ -213,5 +225,5 @@
         # 过期后由下一次读取触发后台刷新，发消息这条路径不会被网络往返卡住。
         modelCacheTtlMs: 300000
         # 单次请求的输出上限。沿用此前实测可用的 32768，而不是上游默认的
-        # 256000：`/v1/models` 不披露输出上限，而这个路由后面是 Qwen。
+        # 256000：`/v1/models` 不披露输出上限，网关上的模型也不都吃得住更大值。
         maxTokens: 32768

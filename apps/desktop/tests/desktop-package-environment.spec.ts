@@ -7,7 +7,8 @@ import { resolveWindowsPackageSettings } from '../scripts/windows-package-settin
 
 const WINDOWS = { platform: 'win32', arch: 'x64' } as const
 const MACOS = { platform: 'darwin', arch: 'arm64' } as const
-const POLICY = { DSH_DESKTOP_MANDATORY_UPDATE_TEST_ORIGIN: 'https://policy.example.com',
+const CKJR = { CKJR_AUTH_ORIGIN: 'https://auth.example.com', CKJR_GATEWAY_ORIGIN: 'https://gateway.example.com' }
+const POLICY = { ...CKJR, DSH_DESKTOP_MANDATORY_UPDATE_TEST_ORIGIN: 'https://policy.example.com',
   DSH_DESKTOP_MANDATORY_UPDATE_CONFIG: JSON.stringify({ allowedAuthOrigins: ['https://login.example.com'] }) }
 const RELEASE = { ...POLICY, DSH_DESKTOP_APP_ID: 'com.example.desktop', DOWNLOAD_TEST_ORIGIN: 'https://updates.example.com',
   DOWNLOAD_TEST_RELEASE_ID: '0123456789abcdef0123456789abcdef' }
@@ -137,6 +138,16 @@ describe('Desktop local packaging configuration', () => {
     expect(() => {
       validateDesktopPackageEnvironment({ ...POLICY, DSH_DESKTOP_APP_ID: RELEASE.DSH_DESKTOP_APP_ID }, WINDOWS, { prepareOnly: true })
     }).not.toThrow()
+  })
+
+  it('requires both CKJR deployment origins in every packaging mode', () => {
+    const release = { ...POLICY, DSH_DESKTOP_APP_ID: RELEASE.DSH_DESKTOP_APP_ID }
+    expect(() => {
+      validateDesktopPackageEnvironment({ ...release, CKJR_AUTH_ORIGIN: undefined }, WINDOWS, { unsigned: true })
+    }).toThrow(/CKJR_AUTH_ORIGIN/u)
+    expect(() => {
+      validateDesktopPackageEnvironment({ ...release, CKJR_GATEWAY_ORIGIN: 'https://gateway.example.com/v1' }, WINDOWS, { prepareOnly: true })
+    }).toThrow(/CKJR_GATEWAY_ORIGIN/u)
   })
 
   it('accepts one local npm registry mirror and rejects other registry forms', () => {
