@@ -159,6 +159,13 @@ const harness = await vi.hoisted(async () => {
     getVersion: () => '1.0.0',
     getAppPath: (): string => 'desktop-test-app',
     setAppLogsPath: vi.fn(),
+    // fork-identity.ts 在**模块加载时**就把应用身份固定下来（app.setName / app.setPath），
+    // 而 main.ts 第一件事就是 import 它——所以这两个方法必须在 mock 里存在。
+    // 上游 main.ts 不做这件事，上游的 mock 里自然没有它们（本 fork 是套件从没跑过才没发现）。
+    // 这里按 spy 建模、**故意不改 `name`**：本 spec 有断言直接依赖 `app.name === 'Desktop test'`
+    // （应用菜单标签、上报元数据），并且用例自己会临时改写它再还原。
+    setName: vi.fn(),
+    setPath: vi.fn(),
     getPath: vi.fn<(name: string) => string>(),
     setAboutPanelOptions: vi.fn<(options: Electron.AboutPanelOptionsOptions) => void>(),
     requestSingleInstanceLock: () => true,
@@ -521,7 +528,9 @@ describe('desktop main startup', () => {
     await vi.advanceTimersByTimeAsync(0)
     const zh = locale === 'zh-CN'
     expect(harness.dialog.showMessageBox).toHaveBeenLastCalledWith(expect.objectContaining({
-      type: 'info', title: zh ? '关于创客匠人' : 'About CKJR', message: zh ? '创客匠人' : 'CKJR',
+      // 正文是「完整产品名」（`aboutProduct` = `BRAND.menu`），两种语言都写 `CKJR Harness`；
+      // 标题那一栏属「公司名/品牌」位置，才按语言取 `BRAND.zh` / `BRAND.en`（见 CKJR-FORK.md）。
+      type: 'info', title: zh ? '关于创客匠人' : 'About CKJR', message: 'CKJR Harness',
       detail: zh ? '版本 V1.0.0' : 'Version V1.0.0', buttons: [zh ? '确定' : 'OK'], cancelId: 0,
     }))
     // A dialog that cannot open is logged, not surfaced as an unhandled rejection.

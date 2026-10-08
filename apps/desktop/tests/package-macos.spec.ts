@@ -36,7 +36,9 @@ async function fixture(arch: 'arm64' | 'x64' = 'arm64') {
     publicUrl: `https://desktop-updates.example.com/dsh-desk/0123456789abcdef0123456789abcdef/feeds/mac-${arch}/`,
   }, 'ckjr-harness-updater')
   const version = '1.2.3-alpha.1'
-  const base = `deepseek-harness-${version}-mac-${arch}`
+  // 与 package-macos.ts 的产物基名一致（本 fork 用 `CKJR-Harness-`，不是上游的 `deepseek-harness-`）；
+  // 不一致时推广后的文件按期望名字找不到，测试会以 ENOENT 失败。
+  const base = `CKJR-Harness-${version}-mac-${arch}`
   const request = { arch, artifactsRoot, version, environment }
   const apple: MacOSArtifactOperations = {
     copyApp: async (source, destination) => {

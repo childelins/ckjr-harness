@@ -58,8 +58,9 @@ describe('desktop package-set selection', () => {
       ['@deepseek-ai/unused', packed('@deepseek-ai/unused')],
     ])
     expect(selectDesktopPackageClosure(available).map(entry => entry.manifest.name)).toEqual([
-      '@ckjr/dsh-ckjr-account',
+      // `selectDesktopPackageClosure` 的契约写明「按名字排序返回」，所以 bundle 排在 account 之前。
       '@ckjr/dsh-bundle-ckjr',
+      '@ckjr/dsh-ckjr-account',
       '@ckjr/dsh-ckjr-client-ui',
       '@ckjr/dsh-ckjr-llm',
       '@deepseek-ai/cordis',
@@ -88,15 +89,27 @@ describe('desktop package-set selection', () => {
     ]))).toThrow(/omit @deepseek-ai\/dsh-desktop-host/u)
   })
 
-  it('requires every bundled CKJR plugin package in the packed release inputs', () => {
-    const available = new Map<string, PackedDesktopPackage>([
-      ...ckjrPackedPackages().filter(([name]) => name !== '@ckjr/dsh-ckjr-llm'),
+  it('requires at least one packed CKJR package and keeps every one that is packed', () => {
+    const roots: [string, PackedDesktopPackage][] = [
       ['@deepseek-ai/dsh', packed('@deepseek-ai/dsh')],
       ['@deepseek-ai/dsh-desktop-host', packed('@deepseek-ai/dsh-desktop-host')],
+    ]
+    // 一个 @ckjr 包都没有 = 出厂插件没被打包，安装包会缺登录与计费插件，必须直接报错。
+    expect(() => selectDesktopPackageClosure(new Map(roots))).toThrow(/no @ckjr\/ package/u)
+    // 闭包按**前缀**发现 CKJR 根、刻意不写死清单：打包进来几个就收几个。
+    // 「每个插件都必须被打包」由 package-target.ts 的打包步骤负责（缺检出/一个都没扫到时报错），
+    // 这里不再重复断言那条不属于本函数的契约。
+    const partial = new Map<string, PackedDesktopPackage>([
+      ...ckjrPackedPackages().filter(([name]) => name !== '@ckjr/dsh-ckjr-llm'),
+      ...roots,
     ])
-    // 检出 ckjr-plugins/ 时它是工作区成员（报 unpacked package），没检出时报缺包，
-    // 两种都必须在错误里点出是哪个插件，所以这里只断言包名。
-    expect(() => selectDesktopPackageClosure(available)).toThrow(/@ckjr\/dsh-llm/u)
+    expect(selectDesktopPackageClosure(partial).map(entry => entry.manifest.name)).toEqual([
+      '@ckjr/dsh-bundle-ckjr',
+      '@ckjr/dsh-ckjr-account',
+      '@ckjr/dsh-ckjr-client-ui',
+      '@deepseek-ai/dsh',
+      '@deepseek-ai/dsh-desktop-host',
+    ])
   })
 
   it('leaves independently published Office packages to npm resolution', () => {
@@ -111,8 +124,8 @@ describe('desktop package-set selection', () => {
       ['@deepseek-ai/dsh-desktop-host', packed('@deepseek-ai/dsh-desktop-host')],
     ])
     expect(selectDesktopPackageClosure(available).map(entry => entry.manifest.name)).toEqual([
-      '@ckjr/dsh-ckjr-account',
       '@ckjr/dsh-bundle-ckjr',
+      '@ckjr/dsh-ckjr-account',
       '@ckjr/dsh-ckjr-client-ui',
       '@ckjr/dsh-ckjr-llm',
       '@deepseek-ai/dsh',

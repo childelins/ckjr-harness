@@ -263,7 +263,9 @@ describe('desktop upload plan', () => {
       'latest.yml',
     ])
     expect(plan).toMatchObject({
-      publicUrl: 'https://download.deepseek.com/dsh-desk/feeds/win-x64/',
+      // 生产更新源只能来自 `DOWNLOAD_PROD_ORIGIN`（本 fixture 用的就是上面那个 PRODUCTION_ORIGIN）。
+      // 写死官方源正是品牌化要杜绝的那件事，见 CKJR-FORK.md 的「更新源（安全修正）」。
+      publicUrl: `${PRODUCTION_ORIGIN}/dsh-desk/feeds/win-x64/`,
       bucket: PRODUCTION_BUCKET,
     })
   })

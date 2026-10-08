@@ -43,8 +43,10 @@ it('shows the application icon with its name as the tooltip and an Open / Quit m
   const f = setup()
   expect(native.createFromPath).toHaveBeenCalledWith('C:/app/resources/tray.ico')
   expect(f.native.image).toEqual({ path: 'C:/app/resources/tray.ico' })
-  expect(f.native.setToolTip).toHaveBeenCalledWith('CKJR')
-  expect(labels(native.menus[0]!)).toEqual(['Open CKJR', 'separator', 'Quit CKJR'])
+  // 托盘与窗口标题要的是「完整产品名」`BRAND.menu`（= `CKJR Harness`），不是裸品牌 `BRAND.en`：
+  // 见 CKJR-FORK.md 的「命名大小写规范」与 locale.ts 的 aboutProduct / openApplication。
+  expect(f.native.setToolTip).toHaveBeenCalledWith('CKJR Harness')
+  expect(labels(native.menus[0]!)).toEqual(['Open CKJR Harness', 'separator', 'Quit CKJR Harness'])
   expect(f.native.setContextMenu).toHaveBeenCalledWith({ template: native.menus[0] })
 })
 
@@ -63,7 +65,7 @@ it('relabels the menu in the current locale and ignores relabel after disposal',
   const f = setup()
   f.setLocale('zh')
   f.tray.relabel()
-  expect(labels(native.menus[1]!)).toEqual(['打开创客匠人', 'separator', '退出创客匠人'])
+  expect(labels(native.menus[1]!)).toEqual(['打开 CKJR Harness', 'separator', '退出 CKJR Harness'])
   f.tray.dispose()
   f.tray.dispose()
   expect(f.native.destroy).toHaveBeenCalledOnce()

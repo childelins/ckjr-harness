@@ -60,6 +60,10 @@ vi.mock('electron', () => ({
     getAppPath: () => '/development-app',
     getPath: (name: string) => name === 'userData' ? '/desktop-user-data' : `/development-${name}`,
     setAppLogsPath: vi.fn(),
+    // fork-identity.ts 在**模块加载时**固定应用身份（main.ts 的第一条 import 就是它），
+    // 而本 spec 会 import main.ts——所以这两个方法必须在 mock 里存在。
+    setName: vi.fn(),
+    setPath: vi.fn(),
     getPreferredSystemLanguages: () => ['en-US'],
     on: (name: string, callback: (...args: unknown[]) => void) => { state.appListeners.set(name, callback) },
     quit: state.quit,
