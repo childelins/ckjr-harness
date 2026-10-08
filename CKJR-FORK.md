@@ -355,6 +355,29 @@ git merge-tree --write-tree --name-only --no-messages master upstream/master
    随机端口不影响 CKJR 登录：`index.ts` 的 ready 消息本来就用 `ctx.webServer.port`
    上报实际端口，`desktopAccountBackend(origin)` 再由这个 origin 推导回调
    `redirect_uri`（`/ckjr/oauth/callback` 挂在同一个 web server 上）。
+8. **上游抬版本会禁用全部出厂插件（2026-10-08 实测，最容易漏）** —— 合并把 harness 从
+   `0.2.0-rc.2` 抬到 `0.2.1-alpha.1` 后，应用直接起不来：`CKJR is unavailable` /
+   `desktop welcome: Web RPC failed`。上游的插件兼容性闸门
+   （`packages/boot/app-boot/src/plugin-compatibility.ts`）按每个插件声明的 DSH peer 范围判定，
+   而三个插件的 peer 当时是**精确版本** `0.2.0-rc.2`，于是三行全被禁用——
+   `dsh: disabling profile plugin row "…"` **只写在 Host 的 stderr 里**，应用把它吞掉了；
+   `account-controller` 因此一直 `pending (waiting for service: deepseekAccount)`，
+   欢迎窗第一个 `account/getState` 就返回失败。
+   - **根修在插件仓**：DSH peer 一律写**范围**。闸门用
+     `semver.satisfies(…, { includePrerelease: true })`，所以 `^0.2.0-rc.2` 接受
+     `0.2.1-alpha.1` 与未来的 `0.2.x` 预发布、拒绝 `0.3.0`；而精确的 `0.2.0-rc.2`
+     连 `0.2.1-alpha.1` 都不接受。已在 `childelins/dsh-ckjr-plugins` 用 `f27c6b1` 修好，
+     回归脚本 `verify-compatibility.mjs`（`79e2089`）跑的是**上游真正的闸门**——
+     每次同步上游后跑一遍，别等安装包在商家机器上炸。
+   - **本机临时放行**（只用于排查；商家新装的机器没有豁免，不能靠它发货）：
+     `dsh plugin --profile desktop allow-version <包>@<版本> --dsh-version <当前版本> --accept-risk`，
+     落在 `~/.ckjr/profiles/desktop/compatibility.json`。
+   - **诊断入口**：手工拉起 Host 就能看到那些被吞掉的报错——
+     `<unpacked>\ckjr-harness.exe --expose-internals <unpacked>\resources\app.asar\dsh\node_modules\@deepseek-ai\dsh-desktop-host\lib\index.js <runtimeDir> <profileDir> <primaryRuntime>`
+     （不设 `DSH_CLIENT_VERSION` 会多一条 `desktop-product-telemetry` 的 `serviceVersion`
+     报错，那是噪声，不是病因）。
+   - 附带一条：`dsh plugin` 进程被杀会留下 **0 字节** 的 `package.json.lock`；陈旧锁接管依赖锁里
+     记录的持有者 PID，空文件判定不了，后续每个写入命令都要白等 120 秒。删掉那个空文件即可。
 
 ## 已知待办
 
