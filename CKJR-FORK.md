@@ -16,7 +16,8 @@
 | 上游 | `git@github.com:deepseek-ai/deepseek-harness.git` |
 | fork | `git@github.com:childelins/ckjr-harness.git` |
 | 品牌化起点 | `639ed01539`（上游 `master`，DSH `0.2.0-rc.2`） |
-| 分支 | `feature/ckjr-branding` |
+| 已同步到的上游 | `5badb15009`（DSH `0.2.1-alpha.1`，2026-10-08 合并：落后 266 / 领先 44） |
+| 分支 | `master`——fork 的默认分支，品牌化与出厂插件现在都在它上面（`feature/ckjr-*` 是历史分支） |
 
 ## 出厂预装创客匠人插件（`feature/ckjr-bundled-plugins`）
 
@@ -134,7 +135,7 @@ pnpm --filter @deepseek-ai/dsh-desktop run generate:ckjr-bundle-patch -- --check
 ## Harness 主目录：`~/.ckjr`
 
 **本 fork 的桌面端默认使用 `~/.ckjr`，与官方的 `~/.dsh` 分开。** 由
-`apps/desktop/src/harness-home.ts` 在模块加载时把默认值写回 `$DSH_HOME`；该模块在
+`apps/desktop/src/fork-identity.ts` 在模块加载时把默认值写回 `$DSH_HOME`；该模块在
 `main.ts` 的 import 列表里排第一位，确保早于任何解析 Harness 路径的模块体执行。
 写回环境变量而不是只改桌面端自己的解析，是因为桌面端解析出的路径会通过继承的环境变量
 传给它的 Host 子进程——设定一次，desktop 与它拉起的 runtime 就落在同一个主目录上。
@@ -226,7 +227,7 @@ export const BRAND = {
 | 启动脚本 | `cli/dsh`、`cli/dsh.cmd` 指向新 exe 名（**命令名仍是 `dsh`，未改**） |
 | Web 端 | `apps/web/public/manifest.webmanifest`（PWA 名）、`favicon.svg` / `favicon-dark.svg` |
 | 测试快照 | `tests/expected/**` 全部同步，否则套件必挂 |
-| 更新源（安全修正） | `scripts/desktop-auto-update-environment.mjs` |
+| 更新源（安全修正） | `apps/desktop/scripts/desktop-auto-update-environment.mjs` |
 
 ## ⚠️ 更新源：这是本次唯一的行为性改动，务必了解
 
@@ -304,9 +305,23 @@ production: { originEnvName: 'DOWNLOAD_PROD_ORIGIN', fixedOrigin: undefined, …
 ```bash
 git remote add upstream git@github.com:deepseek-ai/deepseek-harness.git   # 一次性
 git fetch upstream --tags
-git checkout -b sync/upstream-$(date +%Y%m%d) feature/ckjr-branding
-git rebase upstream/master
+git merge upstream/master          # 在 master 上直接合并：不改写历史，master 对已 clone 的人是快进
 ```
+
+先干跑一遍拿冲突清单，比合并后撞上再回退省事（不碰工作区、不建提交）：
+
+```bash
+git merge-tree --write-tree --name-only --no-messages master upstream/master
+```
+
+> 2026-10-08 实测：落后 266 / 领先 44，干跑只报 **1 个**冲突文件
+> （`apps/desktop-host/src/index.ts` 的端口行，已按下面第 7 条退场）。`locale.ts`、
+> `tests/expected/**`、`electron-builder-config.mjs`、`desktop-auto-update-environment.mjs`
+> 那一批当时**都没有**冲突——它们是历史悠久的热点，不是每次必冲突。
+>
+> 想要线性历史就换成 `git checkout -b sync/upstream-$(date +%Y%m%d)` 再
+> `git rebase upstream/master`；代价是 44 个提交逐个重放，且覆盖 master 必须
+> `--force-with-lease`。
 
 冲突热点就是上面表格里的文件，其中**最容易冲突**的是：
 
@@ -332,6 +347,14 @@ git rebase upstream/master
 6. `packages/client/ui-settings-models/src/client/{ModelsSection,ProviderEditor}.tsx` ——
    见「设置 → 模型」一节。这两处是 fork 改过的上游文件；冲突时保住 `unknown` 规则
    （无 curated 字段就不给编辑器）与 `deepseek-account` 特例。
+7. `apps/desktop-host/src/index.ts` 的端口行 —— **这条已经退场，别再改回来**。
+   上游 `ecd9bf927` 把 `--port 19387` 改成 `--port 0`（由系统分配），理由正是固定端口
+   在 Windows（Hyper-V/WinNAT 保留动态端口段）下会启动失败——而这恰好也解决了本 fork
+   当初改端口要解决的「两个应用抢端口」。2026-10-08 同步时删掉了 fork 的
+   `DEFAULT_WEB_PORT` 与 `$DSH_DESKTOP_WEB_PORT`，采纳上游写法，这个冲突点因此消失。
+   随机端口不影响 CKJR 登录：`index.ts` 的 ready 消息本来就用 `ctx.webServer.port`
+   上报实际端口，`desktopAccountBackend(origin)` 再由这个 origin 推导回调
+   `redirect_uri`（`/ckjr/oauth/callback` 挂在同一个 web server 上）。
 
 ## 已知待办
 
@@ -367,17 +390,17 @@ git rebase upstream/master
 
 ## 交互界面一句里的产品名（`app:web-surface`）
 
-**现象**：桌面端新会话里，代理会告诉用户「你是在 DeepSeek Harness Web GUI（`http://127.0.0.1:19487`）里跟我对话」。
+**现象**：桌面端新会话里，代理会告诉用户「你是在 DeepSeek Harness Web GUI（`http://127.0.0.1:<端口>`）里跟我对话」。
+端口由系统分配、每次启动不同（见「上游同步流程」第 7 条），所以这里不写死一个具体值。
 
-**出处**：`packages/bundle/web-app/src/index.ts:139`
+**出处**：`packages/bundle/web-app/src/index.ts:150`
 
 ```ts
 return `You are interacting with the user through the DeepSeek Harness Web GUI at ${webUrl}. `
 ```
 
-注册处同文件 `:236-240`（section 名 `app:web-surface`、order = `WEB_SURFACE` = 10100，仅在 `config.surfaceContext` 时注册）。
-桌面端本身就是 web-app bundle + 本地 web 服务（`apps/desktop-host/src/index.ts:26` 的 `DEFAULT_WEB_PORT = '19487'`），
-所以这句在桌面端会话里同样出现。
+注册处同文件 `:252-259`（section 名 `app:web-surface`、order = `WEB_SURFACE` = 10100，仅在 `config.surfaceContext` 时注册）。
+桌面端本身就是 web-app bundle + 本地 web 服务，所以这句在桌面端会话里同样出现。
 
 **落点：插件层** ✓（`@ckjr/dsh-ckjr-brand`，沿用它与身份句同一个 `system-prompt/assemble` waterfall）。
 在 assembly 里找到 `app:web-surface`，把文本里的 `DeepSeek Harness` 换成 `CKJR Harness`：
@@ -386,7 +409,8 @@ return `You are interacting with the user through the DeepSeek Harness Web GUI a
 两个实现细节：
 - `PromptAssembly` 的 JSDoc 说 sections "remain uninterpolated until rendered"，
   所以 `section.text` **可能是字符串、也可能仍是注册时那个函数**
-  （上游注册的就是 `text: () => webSurfacePrompt(localWebUrl(promptCtx))`）。两种都要处理，
+  （上游注册的就是 `text: () => webSurfacePrompt(appRootUrl(promptCtx, publicUrl))`；
+  上游加上 `--public-url` 之后，取 URL 的函数由 `localWebUrl` 变成了 `appRootUrl`）。两种都要处理，
   求值上游函数要包 try/catch —— 品牌没生效不该让整个会话起不来。
 - `replaceAll` 对已替换过的文本是恒等操作，因此天然幂等（同一 assembly 会被反复组装）。
 
@@ -396,10 +420,12 @@ return `You are interacting with the user through the DeepSeek Harness Web GUI a
 
 ### `DSH_WEB_URL` 的环境变量描述：**插件层做不到**（已查实，未改 fork）
 
-同一处 `packages/bundle/web-app/src/index.ts:246` 还有一条同样带品牌名的字符串：
+同一处 `packages/bundle/web-app/src/index.ts:265` 还有一条同样带品牌名的字符串
+（2026-10-08 同步时上游把它由 `Canonical local URL of …` 改成了 `Advertised URL of …`，
+随 `--public-url` 一起；品牌名照旧在）：
 
 ```ts
-[DSH_WEB_URL]: { description: 'Canonical local URL of the DeepSeek Harness Web GUI serving this session.' }
+[DSH_WEB_URL]: { description: 'Advertised URL of the DeepSeek Harness Web GUI serving this session.' }
 ```
 
 它经 `shellEnv.register()` 注册，**插件层无法改写**。证据（`packages/shell/shell-env/src/index.ts`）：
