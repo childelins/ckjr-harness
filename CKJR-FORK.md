@@ -358,16 +358,17 @@ git merge-tree --write-tree --name-only --no-messages master upstream/master
 
 ## 已知待办
 
-- [ ] **重新生成出厂补丁合并层**（`dsh-ckjr-plugins` 新增了 `dsh-ckjr-brand`，检出的生成物还没跟上）：
+- [x] ~~**重新生成出厂补丁合并层**~~ 已核实完成（2026-10-08）：`packages/bundle/ckjr/cordis.patch.yml`
+      里 `session-log-deepseek` 的 disable 行（`:98`）与 `ckjr-brand` 的 insert 行（`:111`、`:112`）
+      都在，品牌句与 Session Log 两条改动**已生效**。需要重算时（改了插件 patch、或换了检出）：
 
       ```bash
       DSH_CKJR_PLUGINS_ROOT=<dsh-plugins 检出> pnpm --filter @deepseek-ai/dsh-desktop run generate:ckjr-bundle-patch
       ```
 
-      跑完提交 `packages/bundle/ckjr/cordis.patch.yml`（只多出 `session-log-deepseek` 的
-      disable 行与 `ckjr-brand` 的 insert 行）。**在此之前品牌句与 Session Log 的两条改动
-      都不会生效**——打包流程虽然会在 `pnpm pack` 之前自动重算，但那等于把 fork 的出厂内容
-      交给构建时的插件检出去决定，检出不对就会静默少两条（见上一节的红色警告）。
+      跑完提交 `packages/bundle/ckjr/cordis.patch.yml`。打包流程会在 `pnpm pack` 之前自动重算，
+      但那等于把 fork 的出厂内容交给构建时的插件检出去决定，检出不对就会静默少两条
+      （见上一节的红色警告）。
 - [ ] **跑一次测试套件**。品牌化过程**没有跑过任何测试**：`corepack pnpm install --frozen-lockfile`
       在 1370/1392 个包处超时（npmmirror 反复 `error (23)`），没有 `vitest` 可执行文件。
       已通过 Node 24 类型剥离**实际求值 `locale.ts`** 并与 17 个快照交叉核对（全部通过），
