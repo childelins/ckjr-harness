@@ -1,11 +1,11 @@
 # 本地打出 CKJR Windows 安装包
 
-CI 只在推 `ckjr-v*` 标签时打包；日常改代码、想马上拿到安装包时走这里。
+CI 只在推 `ckjr-harness-v*` 标签时打包；日常改代码、想马上拿到安装包时走这里。
 
 ## 一条命令
 
 ```powershell
-cd D:\Code\deepseek-harness
+cd D:\Code\ckjr-harness
 pwsh -NoProfile -File scripts/package-ckjr-windows.ps1
 ```
 
@@ -47,6 +47,13 @@ git clone git@github.com:childelins/dsh-ckjr-plugins.git ckjr-plugins
 
 `ckjr-plugins/` 已在 `.gitignore` 里。**新增插件不需要改本仓库任何文件**——
 打包会扫目录、自动合并补丁、自动纳入出厂包集合（见 `CKJR-FORK.md`）。
+
+检出**已经在别处**时不必再克隆一份，做个目录联接即可（打包脚本只要求
+`<仓库>/ckjr-plugins/*/package.json` 存在，联接对它是透明的）：
+
+```powershell
+New-Item -ItemType Junction -Path D:\Code\ckjr-harness\ckjr-plugins -Target D:\Code\dsh-ckjr-plugins
+```
 
 **3. `apps/desktop/.env.windows`**（已被 git 忽略）
 
@@ -118,9 +125,9 @@ wheel（PyPI）。这几步国内直连很慢或不通。缓存在
 
 ## 与 CI 的差别
 
-| | 本地 | CI（`ckjr-v*` 标签） |
+| | 本地 | CI（`ckjr-harness-v*` 标签） |
 |---|---|---|
-| 触发 | `scripts/package-ckjr-windows.ps1` | 推 `ckjr-v<版本>` 标签 |
+| 触发 | `scripts/package-ckjr-windows.ps1` | 推 `ckjr-harness-v<版本>` 标签 |
 | 签名 | 未签名 | 未签名 |
 | macOS | 不支持（缺 Apple 签名/公证凭据） | 需设 `CKJR_BUILD_MACOS=true` 且备齐凭据 |
 | 更新源 | test 部署 | test 部署（production 需 `DOWNLOAD_PROD_ORIGIN`） |
