@@ -186,16 +186,17 @@
 # 新会话的默认落点。patch 按 id 定位并**整体替换** config，所以 provider 与 model
 # 都要给全（该行 schema 里两者皆 required，`reasoningEffort` 可选）。
 #
-# model 用 `qwen3.8-max`：2026-10-02 用桌面端已存令牌实测
-# `GET https://agent-cs.myckjr.com/v1/models` 返回
-# `[qwen3.8-max "Qwen3.8 Max", qwen3.7-plus "Qwen3.7 Plus"]`（各 1,000,000 上下文）。
+# model 用 `deepseek-v4.1-flash`：网关 `GET /v1/models` 的实测清单当前是 3 个
+# （`qwen3.8-max` / `qwen3.7-plus` / `deepseek-v4.1-flash`，各 1,000,000 上下文、
+# 三条都是 `['text','image']`，见 README「验证程度」第 2、4 条；2026-10-02 那次
+# 实测只看到前两个，而清单是现取的，会随网关变化）。
 # 网关模型清单是现取的，这里写死的是**默认选中项**而不是清单本身：换成网关上的
-# 另一个 id 只影响首启默认值；若网关将来下线 `qwen3.8-max`，用户仍可在选择器里
-# 改选其它模型，`ckjr` 路由也不会因此加载失败（`resolveModel` 对未编目模型照常放行）。
+# 另一个 id 只影响首启默认值；若网关将来下线 `deepseek-v4.1-flash`，用户仍可在
+# 选择器里改选其它模型，`ckjr` 路由也不会因此加载失败（`resolveModel` 对未编目模型照常放行）。
 - id: agent-default-model
   config:
     provider: ckjr
-    model: qwen3.8-max
+    model: deepseek-v4.1-flash
 
 - insert:
     - id: ckjr-llm
