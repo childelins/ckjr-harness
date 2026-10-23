@@ -1,4 +1,11 @@
-<# Production uninstaller checks with isolated application identity and seeded data. #>
+<#
+Production uninstaller checks with isolated application identity and seeded data.
+
+Fork delta: this fork's Electron application name is `ckjr-harness` (src/fork-identity.ts), so the
+uninstaller removes `$APPDATA\<product name>` and never the package-scope directories
+(`$APPDATA\@harness-installer-test\...`), which belong to an official DeepSeek Harness installation.
+The junction-no-follow guarantee is seeded under the product directory the uninstaller does remove.
+#>
 [CmdletBinding()]
 param([Parameter(Mandatory)][string]$Installer, [Parameter(Mandatory)][string]$ProductName,
     [Parameter(Mandatory)][string]$RegistryKey, [Parameter(Mandatory)][string]$OutputDirectory,
@@ -53,8 +60,8 @@ try {
         if ($entry.InstallLocation.TrimEnd('\') -ne $installPath) { throw 'Uninstall entry lacks InstallLocation' }
         foreach ($path in @($homePath, $productDataPath, $userDataPath, $cachePath, $externalPath)) { New-Item -ItemType Directory -Force -Path $path | Out-Null }
         [IO.File]::WriteAllText((Join-Path $externalPath 'keep.txt'), 'outside data root')
-        if (-not (Test-Path -LiteralPath (Join-Path $userDataPath 'linked-project'))) {
-            New-Item -ItemType Junction -Path (Join-Path $userDataPath 'linked-project') -Target $externalPath | Out-Null
+        if (-not (Test-Path -LiteralPath (Join-Path $productDataPath 'linked-project'))) {
+            New-Item -ItemType Junction -Path (Join-Path $productDataPath 'linked-project') -Target $externalPath | Out-Null
         }
         [IO.File]::WriteAllText((Join-Path $homePath 'session.txt'), 'keep session')
         [IO.File]::WriteAllText((Join-Path $productDataPath 'state.txt'), 'product data')
@@ -80,13 +87,14 @@ try {
         }
         Wait-Exit
         $retained = $mode -in @('upgrade', 'replaced')
-        # A DSH_HOME inside the Electron directory protects that directory (and its scope) but not the other roots.
-        $userDataRetained = $retained -or $mode -eq 'home-inside'
+        # A published DSH_HOME still protects targets overlapping it; the package-scope roots are never targets here.
         if ([IO.File]::ReadAllText((Join-Path $externalPath 'keep.txt')) -ne 'outside data root') { throw 'Cleanup followed a junction into a project' }
         if (-not (Test-Path (Join-Path $homePath 'session.txt'))) { throw "Harness home retention failed: $mode" }
         if ((Test-Path (Join-Path $productDataPath 'state.txt')) -ne $retained) { throw "Product data retention failed: $mode" }
-        if ((Test-Path (Join-Path $userDataPath 'Local State')) -ne $userDataRetained) { throw "Electron user data retention failed: $mode" }
-        if ((Test-Path -LiteralPath $scopePath) -ne $userDataRetained) { throw "Package scope directory retention failed: $mode" }
+        # This fork never cleans package-scoped Electron data: it names its own user-data directory
+        # after `ckjr-harness`, and the scoped directory belongs to an official DeepSeek Harness.
+        if (-not (Test-Path (Join-Path $userDataPath 'Local State'))) { throw "Package-scoped Electron data must be retained: $mode" }
+        if (-not (Test-Path -LiteralPath $scopePath)) { throw "Package scope directory must be retained: $mode" }
         if ((Test-Path (Join-Path $cachePath 'download.txt')) -ne $retained) { throw "Update cache retention failed: $mode" }
         Write-Output "passed: $mode"
     }

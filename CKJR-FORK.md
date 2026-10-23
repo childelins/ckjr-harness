@@ -440,6 +440,14 @@ git merge-tree --write-tree --name-only --no-messages master upstream/master
 
 ## 已知待办
 
+- [x] ~~**卸载器跨产品误删官方 userData**~~ 已修（2026-10-23，rc.2 打包后的真实安装冒烟发现）：
+  `apps/desktop/installer/uninstall.nsh` 原样继承上游的 `!ifdef APP_PACKAGE_NAME` 分支，会删
+  `%APPDATA%\@deepseek-ai\dsh-desktop`。本 fork 的 Electron 应用名是 `ckjr-harness`
+  （`src/fork-identity.ts:37,52`），userData 是 `%APPDATA%\ckjr-harness`；而包作用域目录属于
+  **可能与 CKJR 同机共存的正版 DeepSeek Harness**——同机装官方版时卸载 CKJR 会连带删掉官方
+  用户数据。现已删掉那个分支（只保留产品目录 + updater 缓存），并同步
+  `tests/windows-uninstall-smoke.ps1` 断言（包作用域目录必须保留、junction 不跟随的用例挪到
+  产品目录下）与 README 的中英文卸载说明。⚠️ 该修改要**重新打包**才进安装包。
 - [x] ~~**重新生成出厂补丁合并层**~~ 已核实完成（2026-10-08）：`packages/bundle/ckjr/cordis.patch.yml`
       里 `session-log-deepseek` 的 disable 行（`:98`）与 `ckjr-brand` 的 insert 行（`:111`、`:112`）
       都在，品牌句与 Session Log 两条改动**已生效**。需要重算时（改了插件 patch、或换了检出）：

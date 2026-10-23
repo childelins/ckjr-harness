@@ -23,14 +23,13 @@ Function un.CleanData
   ; Only a DSH_HOME published as a Windows environment variable is visible here.
   ReadEnvStr $UnHome DSH_HOME
   ClearErrors
+  ; This fork sets the Electron application name to `ckjr-harness` (src/fork-identity.ts), so its
+  ; user data is the product directory below, not a directory nested under the package scope.
   StrCpy $UnTarget "$APPDATA\${PRODUCT_FILENAME}"
   Call un.RemoveData
-  !ifdef APP_PACKAGE_NAME
-    ; Electron derives user data from the package name; a scoped name nests it one directory deeper.
-    StrCpy $UnTarget "$APPDATA\${APP_PACKAGE_NAME}"
-    Call un.RemoveData
-    System::Call '$PLUGINSDIR\window-frame.dll::UninstallRemoveEmptyParents(w "$UnTarget", w "$APPDATA") ?c'
-  !endif
+  ; `${APP_PACKAGE_NAME}` is still the upstream package name (`@deepseek-ai/dsh-desktop`), and that
+  ; scoped directory belongs to an official DeepSeek Harness installation, which may coexist with
+  ; this fork on one machine. Never clean it from this product's uninstaller.
   StrCpy $UnTarget "$LOCALAPPDATA\${DSH_UPDATER_CACHE_NAME}"
   Call un.RemoveData
 FunctionEnd
