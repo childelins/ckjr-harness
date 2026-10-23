@@ -73,9 +73,9 @@ describe('desktop build version discovery', () => {
 
   it('numbers after existing unnotarized DMG and ZIP artifacts', async () => {
     const artifactsRoot = await artifactsWith([
-      `deepseek-harness-${PRERELEASE}.${DATE}.2-mac-arm64-unnotarized.dmg`,
-      `deepseek-harness-${PRERELEASE}.${DATE}.4-mac-arm64-unnotarized.zip`,
-      `deepseek-harness-${PRERELEASE}.${DATE}.9-mac-arm64-unnotarized.zip.blockmap`,
+      `CKJR-Harness-${PRERELEASE}.${DATE}.2-mac-arm64-unnotarized.dmg`,
+      `CKJR-Harness-${PRERELEASE}.${DATE}.4-mac-arm64-unnotarized.zip`,
+      `CKJR-Harness-${PRERELEASE}.${DATE}.9-mac-arm64-unnotarized.zip.blockmap`,
     ])
     await expect(suggestDesktopBuildVersion({ productVersion: PRERELEASE, target: 'mac-arm64', environment: {}, date: DATE, artifactsRoot }))
       .resolves.toBe(`${PRERELEASE}.${DATE}.5`)

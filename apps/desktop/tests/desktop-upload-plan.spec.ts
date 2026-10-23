@@ -315,7 +315,7 @@ describe('desktop upload plan', () => {
     expect(plan.version).toBe('1.2.3')
     await expect(createDesktopUploadPlan('mac-arm64', { ...paths, packagedProductVersion: '1.2.4' }))
       .rejects.toThrow(/completion record/u)
-    await writeFile(join(paths.artifactsRoot, 'deepseek-harness-1.2.3-mac-arm64.zip'), 'tampered')
+    await writeFile(join(paths.artifactsRoot, 'CKJR-Harness-1.2.3-mac-arm64.zip'), 'tampered')
     await expect(createDesktopUploadPlan('mac-arm64', { ...paths, packagedProductVersion: '1.2.3' }))
       .rejects.toThrow(/size.*metadata/u)
   })

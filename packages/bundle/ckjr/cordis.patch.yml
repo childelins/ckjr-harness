@@ -63,11 +63,11 @@
 #
 # 出厂行在 `packages/bundle/base/cordis.patch.yml:43`。它是「在使用官方模型 API 时
 # 上传 Session Log」那个开关的宿主：默认 `enabled: true`，把会话日志后缀挂在请求的
-# `dsh_session_log` 字段上发出去（`packages/session/session-log-deepseek/src/index.ts:185-187`，
+# `dsh_session_log` 字段上发出去（`packages/session/session-log-deepseek/src/index.ts:187-193`，
 # 判据只有 `enabled` 与会话是否存在，**不按 provider 区分**）。
 #
 # 关键：它在**我们的 CKJR 网关上同样生效**。该字段由 DeepSeek Messages 适配器统一注入
-# （`packages/llm/llm-deepseek/src/host.ts:36` 的 `prepareExtensions`），而
+# （`packages/llm/llm-deepseek/src/host.ts:52` 的 `prepareExtensions`），而
 # `dsh-ckjr-llm` 注册的 `ckjr` 路由复用的正是这个适配器（`registerDeepSeekProvider`）。
 # 也就是说：不 disable，商家每次对话都会把会话日志发给网关，而不只是发给官方 API。
 #
@@ -82,7 +82,7 @@
 #     （`packages/settings/settings/src/index.ts:303-307`）。行被 disable 后命名空间不再被
 #     服务，那一行**根本不会被注册**。
 #
-#     这是上游支持的机制，不是遮蔽或隐藏 hack：`packages/client/ui-settings/README.md:38`
+#     这是上游支持的机制，不是遮蔽或隐藏 hack：`packages/client/ui-settings/README.md:40`
 #     写明 "A deployment that never composed the owner therefore shows no trace of the page"。
 #     对照来看，`dsh-ckjr-client-ui` 抢 `settings.models.sign-in` 座位时才是真的只能整体
 #     disable 占位者——那一条的副作用是被迫接受的，而这一条恰好正是我们想要的结果。
@@ -91,7 +91,7 @@
 # 设置项仍然显示，而用户要求的是"默认关闭 **并且** 不要显示"。
 #
 # 未一并处理（留给用户决定）：`session-telemetry-otel`
-# （`packages/bundle/base/cordis.patch.yml:204`）是**另一条**独立的上传路径，
+# （`packages/bundle/base/cordis.patch.yml:218`）是**另一条**独立的上传路径，
 # 默认 `mode: FEEDBACK_ONLY`、默认发往 `dsh-otel-collector.deepseeksvc.com`，
 # 且它**没有**设置项。关它属于行为性变更，本次未动。
 #
@@ -174,11 +174,11 @@
 #    「只保留创客匠人」，一并摘掉。
 #
 # 3. 把默认模型从 `deepseek-official/deepseek-flash` 挪到 `ckjr`。
-#    `packages/bundle/base/cordis.patch.yml:82` 的 `agent-default-model` 出厂值是
+#    `packages/bundle/base/cordis.patch.yml:90` 的 `agent-default-model` 出厂值是
 #    `provider: deepseek-official` —— provider 一旦被 disable，新会话的默认选择就
 #    指向一个不存在的路由：模型选择器显示为不可用，首次发消息会被
 #    `session-controller` 的 `requireModel()` 以 `session/model-unavailable` 拒绝
-#    （`packages/api/session-controller/src/commands.ts:380`）。所以这两件事必须同层。
+#    （`packages/api/session-controller/src/commands.ts:365-367`）。所以这两件事必须同层。
 #    注意 `initializeDefaultModel()`（会自动挑第一个可用模型）硬编码了
 #    `deepseek-account`，但它的唯一调用方是 `ui-settings-account`，已被
 #    `dsh-ckjr-client-ui` disable，不会运行，因此不能指望它兜底。

@@ -16,7 +16,7 @@
 | 上游 | `git@github.com:deepseek-ai/deepseek-harness.git` |
 | fork | `git@github.com:childelins/ckjr-harness.git` |
 | 品牌化起点 | `639ed01539`（上游 `master`，DSH `0.2.0-rc.2`） |
-| 已同步到的上游 | `5badb15009`（DSH `0.2.1-alpha.1`，2026-10-08 合并：落后 266 / 领先 44） |
+| 已同步到的上游 | `687f282e86`（DSH `0.2.1-rc.2`，2026-10-23 合并：上游 1659 提交 / fork 52 提交，15 个冲突文件） |
 | 分支 | `master`——fork 的默认分支，品牌化与出厂插件现在都在它上面（`feature/ckjr-*` 是历史分支） |
 
 ## 出厂预装创客匠人插件（`feature/ckjr-bundled-plugins`）
@@ -319,6 +319,14 @@ origin 校验，缺项即失败）→ `extraMetadata.dshCkjrOrigins`（产物自
   一旦上游给 `unknown` 补上真实字段，这条规则就要重新评估（那时应改为按字段能力判断）。
 - 若上游自己给「编辑」加了开关（例如 `row.editable`）：**优先改用上游的开关并删掉这里的规则**，
   让这个 fork 改动退场。
+- **2026-10-23（DSH `0.2.1-rc.2`）实测**：上游没有加通用开关，而是直接隐藏了
+  `deepseek-account` 行的「编辑」按钮（模型目录改由账号 listing 提供），并给行内渲染加了
+  `disabled={!open && state.status !== 'ready'}` 与点击前状态复检；`ProviderEditor.tsx` 同时删掉了
+  账号专用的 `DeepSeekModelsEditor` 分支与 `describeCredential` effect，`layoutOf` 仍是
+  `llm-deepseek` / `llm-pi-ai` 两分支。合并解：编辑按钮条件写成
+  `row.entry.provider === 'deepseek-account' || !editable`（上游规则 + fork 的 `unknown` 规则），
+  `ProviderEditor` 里 `accountProvider` 局部变量已无消费者、删除，保留
+  `const layout = providerLayout(props.provider, namespace.ns)`。若要改这块，先跑该包测试。
 - 同包测试 `tests/components.client.spec.tsx` 的
   `knows which providers have a curated field set to edit` 与
   `leaves a provider whose namespace has no curated fields to its seat card`
@@ -342,6 +350,28 @@ git merge-tree --write-tree --name-only --no-messages master upstream/master
 > （`apps/desktop-host/src/index.ts` 的端口行，已按下面第 7 条退场）。`locale.ts`、
 > `tests/expected/**`、`electron-builder-config.mjs`、`desktop-auto-update-environment.mjs`
 > 那一批当时**都没有**冲突——它们是历史悠久的热点，不是每次必冲突。
+>
+> 2026-10-23 实测：上游 1659 提交 / fork 52 提交，干跑报 **15 个**冲突文件，全部落在
+> `apps/desktop/**` 与 `packages/client/ui-settings-models/**`。`src/locale.ts`、`tests/expected/**`
+> 这次**没有**冲突；新热点是发布链路——上游给产物加了 `-unnotarized` 后缀与
+> `desktopArtifactOutput()` 目录选择，并在 `main.ts` 把 manifest 读取提前给
+> `updateChannel` 用。合并时 fork 侧要保住的是：`CKJR-Harness-` 产物名 + `output.suffix`、
+> `dshCkjrOrigins`、`DOWNLOAD_PROD_ORIGIN` fail-closed、`readDesktopManifest` 单次读取。
+>
+> 合并后必做（2026-10-23 实测，漏掉任一项都会在提交或打包时被拦）：
+>
+> ```bash
+> corepack pnpm install --frozen-lockfile     # 上游 lockfile 一起合并，node_modules 必须跟上
+> pnpm run gen-provider-data                  # pi-ai 目录随 lock 更新；不重跑 pre-commit 会拦
+> git add packages/llm/llm-pi-ai/src/provider-data.generated.ts
+> # README.md / README.zh.md 的段落改过就必须重录配对记录，否则 pre-commit 的
+> # "translation pairing" 会拦：
+> node node_modules/tsx/dist/cli.mjs scripts/verify-translation-pairing.ts --write apps/desktop/README.md
+> git add apps/desktop/README.i18n.yaml
+> ```
+>
+> PowerShell 里 `node_modules/.bin/tsx` 的 `.ps1` 包装会被执行策略拦住，直接用
+> `node node_modules/tsx/dist/cli.mjs <script>`（lefthook 走 shell，不受此影响）。
 >
 > 想要线性历史就换成 `git checkout -b sync/upstream-$(date +%Y%m%d)` 再
 > `git rebase upstream/master`；代价是 44 个提交逐个重放，且覆盖 master 必须
