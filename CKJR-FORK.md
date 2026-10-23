@@ -15,8 +15,8 @@
 |---|---|
 | 上游 | `git@github.com:deepseek-ai/deepseek-harness.git` |
 | fork | `git@github.com:childelins/ckjr-harness.git` |
-| 品牌化起点 | `639ed01539`（上游 `master`，DSH `0.2.0-rc.2`） |
-| 已同步到的上游 | `687f282e86`（DSH `0.2.1-rc.2`，2026-10-23 合并：上游 1659 提交 / fork 52 提交，15 个冲突文件） |
+| 品牌化起点 | 上游标签 `dsh-v0.2.0-rc.2`（DSH `0.2.0-rc.2`） |
+| 已同步到的上游 | 上游标签 `dsh-v0.2.1-rc.2`（DSH `0.2.1-rc.2`，2026-10-23 合并：上游 1659 提交 / fork 52 提交，15 个冲突文件） |
 | 分支 | `master`——fork 的默认分支，品牌化与出厂插件现在都在它上面（`feature/ckjr-*` 是历史分支） |
 
 ## 出厂预装创客匠人插件（`feature/ckjr-bundled-plugins`）
@@ -48,7 +48,9 @@ patch 层**；而 profile 的 `bundles` 名单又必须是 `packages/*/*` 下的
 
 ### 数据流（自下而上）
 
-1. `pnpm-workspace.yaml` 增加 `ckjr-plugins/*`，把插件检出纳入工作区。
+1. 插件检出放在仓库根 `ckjr-plugins/`，但**刻意不加入 `pnpm-workspace.yaml`**（原因见该文件
+   注释：加进工作区会让 lockfile 为每个插件引入 importer，并为普通版本范围 peer 自动安装依赖，
+   从而被迫全量重解析、浮动传递依赖）。打包脚本按**目录扫描**消费它，效果相同且锁文件稳定。
 2. `packages/boot/app-boot/src/profile.ts` 的 `PROFILE_TEMPLATES.web.bundles` **末尾**加上
    `@ckjr/dsh-bundle-ckjr`：桌面端 profile 的 bundle 列表就来自这里（`apps/desktop/src/project-manager.ts`）。
    必须排在最后——各插件的 disable 按 id 定位 `dsh-base` / `dsh-web-app` 已经 insert 的行。
@@ -94,9 +96,12 @@ pnpm --filter @deepseek-ai/dsh-desktop run generate:ckjr-bundle-patch -- --check
 注册的 `ckjr` 路由复用的正是这个适配器（`registerDeepSeekProvider`），且该扩展的判据里
 没有 provider 过滤。
 
-**刻意没做**：`session-telemetry-otel`（`packages/bundle/base/cordis.patch.yml:204`）是**另一条**
-独立上传路径，默认 `FEEDBACK_ONLY`、默认发往 `dsh-otel-collector.deepseeksvc.com`，而且它
-**没有设置项**。关它属于行为性变更，等明确要求再动。
+**已跟进（后续插件提交）**：`session-telemetry-otel`（`packages/bundle/base/cordis.patch.yml:218`）是
+**另一条**独立上传路径，默认 `FEEDBACK_ONLY`、默认发往 `dsh-otel-collector.deepseeksvc.com`，而且它
+**没有设置项**。现在它也在生成补丁里 `disabled: true`（与 session-log 同层、同理由：用户关不了，
+而这是一条会对 CKJR 网关生效的独立上传路径）；`dsh-ckjr-brand/verify-brand-prompt.mjs` 已同步覆盖。
+注意插件仓 `dsh-ckjr-brand/cordis.patch.yml` 开头仍留有一段"未一并处理"的旧注释（历史叙述，
+实际 disable 行在文件下方）——下次改插件仓时顺手删掉即可，不影响行为。
 
 **验证**：`node dsh-ckjr-brand/verify-brand-prompt.mjs`——16 项断言，跑的是 fork **已编译的**
 `SystemPrompt` 与 Loader **真正的** `applyEntryPatches`，含"preset 确实遮蔽 personaPrefix"的
@@ -465,6 +470,35 @@ git merge-tree --write-tree --name-only --no-messages master upstream/master
       它们是上游项目文档，本次未动。
 - [ ] `.env.*.example` 里 `DSH_DESKTOP_APP_ID=com.ckjr.harness.desktop` 是示例值，
       正式发布前请确认（**刻意不同于** `com.ckjr.agent.desktop`，两者是不同产品）。
+- [x] ~~**2026-10-23 跑一次测试套件**~~ 部分完成：合并后已跑合并相关的 19 个 spec（595 通过）
+      + 桌面打包链 spec，并对冲突面/打包面逐一验证；**完整套件仍红，原因见下两条**。
+- [ ] **文档门禁（`pnpm run test:docs`）自 fork 起就是红的**，2026-10-23 实测 18 PASS / 3 FAIL，
+      均与上游无关：
+      - `translation pairing` + `doc-standard`：fork 专属包 `packages/bundle/ckjr/README.md`
+        缺 upstream 要求的 Summary / Table of Contents / Dev Note 骨架，也没有 `README.zh.md`
+        与 `README.i18n.yaml` 配对记录。
+      - `verify-repository-references`：`CKJR-FORK.md:410` 仍有上游 commit id（`ecd9bf927`）；
+        `python/sdk/uv.lock:113` 是**误报**（wheel 的 `size = 6344383` 恰好唯一匹配本仓库一个
+        commit 前缀，对象库越大越容易撞）。
+      修法：给 bundle README 补骨架+中文配对；把 `CKJR-FORK.md` 里剩余 commit id 改成上游标签。
+      `uv.lock` 是生成物，别改，建议给该门禁加"生成物豁免"或改用更长候选长度。
+- [ ] **macOS 本地未签名打包与部分上游 spec 缺 CKJR fixture**（既有欠账，非 rc.2 回归）：
+      `createElectronBuilderConfig` / `validateDesktopPackageEnvironment` 对 CKJR origins
+      是**所有模式必填**，而 `localMacOSPackageEnvironment()` 会把 `CKJR_*` 当 ambient 剥离、
+      上游新加的 `package:mac:*:unsigned` 用例也不带 CKJR fixture。后果：
+      `installer-packaging.spec.ts`（6 failed）、`macos-signature.spec.ts`（10 failed）等直接调
+      builder config 的 spec 红；本机 macOS 未签名打包会报
+      `CKJR_AUTH_ORIGIN requires an HTTPS origin`。Windows 打包链不受影响（`.env.windows` 有值）。
+      修法二选一：给这些 spec 统一加 CKJR fixture；或让 unsigned 本地 macOS 模式跳过 CKJR 校验
+      （代价：本地产物无 `dshCkjrOrigins`）。
+- [ ] **安装包 EXE 元数据**：`ProductName=ckjr-harness`、`FileVersion/ProductVersion=0.2.1-rc.2`，
+      但 `CompanyName` 为空（electron-builder 警告 author 缺失）、`FileDescription` 还是上游那句
+      "Electron desktop shell for a bundled dsh runtime and external plugins"。要改需动
+      `apps/desktop/package.json` 的 `author`/`description` 或 `electron-builder-config.mjs` 的
+      `win.companyName`，并**重新打包**才生效。
+- [ ] **本机无 PowerShell 7**：`scripts/package-ckjr-windows.ps1` 是 UTF-8 无 BOM，PS 5.1 会按 GBK
+      误读；无 `pwsh` 时用 UTF-8 BOM 副本 + 硬编码 `$repo` 执行（做法写在 CKJR-LOCAL-BUILD.md）。
+      装好 PS7 后按文档原样跑即可。
 
 ## 交互界面一句里的产品名（`app:web-surface`）
 

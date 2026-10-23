@@ -28,6 +28,11 @@
 #   CI 里没有真 CDN，所以默认走 test 部署（只把 <origin>/dsh-desk/<release-id>/feeds/<target>/
 #   写进应用更新配置），origin 由仓库变量给出，缺失即失败。
 #
+# 出厂插件部署地址（CKJR_AUTH_ORIGIN / CKJR_GATEWAY_ORIGIN）：
+#   所有打包模式都必填（含未签名与仅准备构建），由仓库变量给出，缺失即失败。
+#   它们写进产物 manifest，Host 启动时读回并注入插件环境；见 CKJR-FORK.md
+#   「出厂插件的部署地址：两个环境变量，不写死域名」。
+#
 # 缓存策略（见下方 “Cache” 步骤注释）：
 #   - pnpm store：按 OS + lockfile 哈希缓存，fork 没有 master 播种作业，故用 actions/cache（含保存）。
 #   - apps/desktop/.desktop-build/downloads：Electron 与运行时归档的共享不可变下载缓存
@@ -60,8 +65,9 @@ concurrency:
 env:
   PRIMARY_NODE_VERSION: '24'
   DSH_TELEMETRY_DISABLED: '1'
-  # CKJR 插件包随应用一起打包：在安装依赖前把插件仓库检出到 ckjr-plugins/，
-  # 由 fork 侧的 pnpm 工作区 glob（feature/ckjr-bundled-plugins）把它纳入工作区。
+  # CKJR 插件包随应用一起打包：在安装依赖前把插件仓库检出到 ckjr-plugins/。
+  # 插件刻意不是 pnpm 工作区成员（见 pnpm-workspace.yaml 注释）：打包脚本按目录扫描、
+  # 逐个 pnpm pack 并纳入出厂闭包，见 CKJR-FORK.md「数据流」。
   CKJR_PLUGINS_REPOSITORY: childelins/dsh-ckjr-plugins
   CKJR_PLUGINS_PATH: ckjr-plugins
 
@@ -103,6 +109,8 @@ jobs:
       CKJR_DOWNLOAD_PROD_ORIGIN: ${{ vars.DOWNLOAD_PROD_ORIGIN }}
       CKJR_MANDATORY_UPDATE_TEST_ORIGIN: ${{ vars.DSH_DESKTOP_MANDATORY_UPDATE_TEST_ORIGIN }}
       CKJR_MANDATORY_UPDATE_PROD_ORIGIN: ${{ vars.DSH_DESKTOP_MANDATORY_UPDATE_PROD_ORIGIN }}
+      CKJR_AUTH_ORIGIN: ${{ vars.CKJR_AUTH_ORIGIN }}
+      CKJR_GATEWAY_ORIGIN: ${{ vars.CKJR_GATEWAY_ORIGIN }}
       CKJR_MANDATORY_UPDATE_CONFIG: ${{ vars.DSH_DESKTOP_MANDATORY_UPDATE_CONFIG }}
       CKJR_MANDATORY_UPDATE_PROD_CONFIG: ${{ vars.DSH_DESKTOP_MANDATORY_UPDATE_PROD_CONFIG }}
       CKJR_WIN_SIG_CACHE_CONCURRENCY: ${{ vars.DSH_DESKTOP_WINDOWS_SIGNATURE_CACHE_CONCURRENCY }}
@@ -294,6 +302,10 @@ jobs:
             policy_config="${CKJR_MANDATORY_UPDATE_PROD_CONFIG:-}"
           fi
 
+          # ---- 出厂插件部署地址：所有打包模式都必填（desktop-ckjr-environment.mjs） ----
+          need '仓库变量 CKJR_AUTH_ORIGIN（商家 SaaS origin，绝对 HTTPS origin）' "${CKJR_AUTH_ORIGIN:-}"
+          need '仓库变量 CKJR_GATEWAY_ORIGIN（ckjr-agent 网关 origin，绝对 HTTPS origin）' "${CKJR_GATEWAY_ORIGIN:-}"
+
           # ---- 非未签名构建还需要自动更新源（未签名构建不需要，见 README.md:322） ----
           release_id=''
           if [ "$unsigned" != 'true' ]; then
@@ -372,6 +384,8 @@ jobs:
           put "$policy_name" "$policy_origin"
           put DSH_DESKTOP_MANDATORY_UPDATE_CONFIG "$policy_config"
           put DSH_DESKTOP_NPM_REGISTRY "${CKJR_NPM_REGISTRY_VAR:-}"
+          put CKJR_AUTH_ORIGIN "$CKJR_AUTH_ORIGIN"
+          put CKJR_GATEWAY_ORIGIN "$CKJR_GATEWAY_ORIGIN"
           put DSH_DESKTOP_WINDOWS_SIGNATURE_CACHE_CONCURRENCY "${CKJR_WIN_SIG_CACHE_CONCURRENCY:-}"
           if [ "$update_env" = 'test' ] && [ "$unsigned" != 'true' ]; then
             put DOWNLOAD_TEST_ORIGIN "$CKJR_DOWNLOAD_TEST_ORIGIN"
@@ -614,6 +628,8 @@ jobs:
       CKJR_DOWNLOAD_PROD_ORIGIN: ${{ vars.DOWNLOAD_PROD_ORIGIN }}
       CKJR_MANDATORY_UPDATE_TEST_ORIGIN: ${{ vars.DSH_DESKTOP_MANDATORY_UPDATE_TEST_ORIGIN }}
       CKJR_MANDATORY_UPDATE_PROD_ORIGIN: ${{ vars.DSH_DESKTOP_MANDATORY_UPDATE_PROD_ORIGIN }}
+      CKJR_AUTH_ORIGIN: ${{ vars.CKJR_AUTH_ORIGIN }}
+      CKJR_GATEWAY_ORIGIN: ${{ vars.CKJR_GATEWAY_ORIGIN }}
       CKJR_MANDATORY_UPDATE_CONFIG: ${{ vars.DSH_DESKTOP_MANDATORY_UPDATE_CONFIG }}
       CKJR_MANDATORY_UPDATE_PROD_CONFIG: ${{ vars.DSH_DESKTOP_MANDATORY_UPDATE_PROD_CONFIG }}
       CKJR_MACOS_SIGNING_IDENTITY: ${{ vars.DSH_DESKTOP_MACOS_SIGNING_IDENTITY }}
@@ -800,6 +816,10 @@ jobs:
             policy_config="${CKJR_MANDATORY_UPDATE_PROD_CONFIG:-}"
           fi
 
+          # ---- 出厂插件部署地址：所有打包模式都必填（desktop-ckjr-environment.mjs） ----
+          need '仓库变量 CKJR_AUTH_ORIGIN（商家 SaaS origin，绝对 HTTPS origin）' "${CKJR_AUTH_ORIGIN:-}"
+          need '仓库变量 CKJR_GATEWAY_ORIGIN（ckjr-agent 网关 origin，绝对 HTTPS origin）' "${CKJR_GATEWAY_ORIGIN:-}"
+
           # 签名身份与 Team ID（desktop-release-environment.mjs:76-86）
           need '仓库变量 DSH_DESKTOP_MACOS_SIGNING_IDENTITY（不含 "Developer ID Application:" 前缀）' "${CKJR_MACOS_SIGNING_IDENTITY:-}"
           need '仓库变量 DSH_DESKTOP_MACOS_TEAM_ID（10 位大写字母或数字）' "${CKJR_MACOS_TEAM_ID:-}"
@@ -889,6 +909,8 @@ jobs:
           put "$policy_name" "$policy_origin"
           put DSH_DESKTOP_MANDATORY_UPDATE_CONFIG "$policy_config"
           put DSH_DESKTOP_NPM_REGISTRY "${CKJR_NPM_REGISTRY_VAR:-}"
+          put CKJR_AUTH_ORIGIN "$CKJR_AUTH_ORIGIN"
+          put CKJR_GATEWAY_ORIGIN "$CKJR_GATEWAY_ORIGIN"
           put DSH_DESKTOP_MACOS_PACK_CONCURRENCY "${CKJR_MACOS_PACK_CONCURRENCY:-}"
           put DSH_DESKTOP_MACOS_SIGNING_IDENTITY "$CKJR_MACOS_SIGNING_IDENTITY"
           put DSH_DESKTOP_MACOS_TEAM_ID "$CKJR_MACOS_TEAM_ID"

@@ -9,6 +9,13 @@ cd D:\Code\ckjr-harness
 pwsh -NoProfile -File scripts/package-ckjr-windows.ps1
 ```
 
+> 脚本是 **UTF-8 无 BOM** 的 `.ps1`，`pwsh`（PowerShell 7）能正确按 UTF-8 解码。**本机没有
+> PowerShell 7 时**（只有 Windows PowerShell 5.1），5.1 会按 GBK 误读中文并报"字符串缺少终止符"：
+> 把脚本另存为 UTF-8 **BOM** 的副本（例如放到 `apps/desktop/.desktop-build/`），并把
+> `$repo = Split-Path -Parent $PSScriptRoot` 改成硬编码仓库根，然后用
+> `powershell.exe -NoProfile -ExecutionPolicy Bypass -File <副本>` 执行——逻辑完全相同，
+> 2026-10-23 的 rc.2 打包就是这样跑通的。装好 PowerShell 7 后按上面一条命令即可。
+
 脚本自己会做前置检查（VS C++ 工具、插件检出、`.env.windows`）、设置网络环境变量、
 跑完整流水线，最后打印产物路径与 SHA256。首次约 30-50 分钟，缓存热了以后 20-25 分钟。
 
